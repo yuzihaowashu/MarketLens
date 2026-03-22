@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import html
+import re
 import time
 import sys
 import os
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Page config
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title='MarketLens', page_icon='🔍', layout='wide',
-                   initial_sidebar_state='collapsed')
+                   initial_sidebar_state='expanded')
 
 TICKERS = WATCHLIST_TICKERS
 MAX_HISTORY_TURNS = 3
@@ -71,7 +73,9 @@ LEVELS = {
         'system_prompt': (
             "You are MarketLens, a concise data-driven assistant for a financial analyst. "
             "Use precise technical language freely (z-scores, basis points, vol surface, etc.). "
-            "Reference specific metrics, dates, and magnitudes from the provided context. "
+            "Reference specific metrics, dates, and magnitudes from the provided context only — "
+            "never use placeholders like [date] or [ticker]; each signal line begins with an ISO date "
+            "(YYYY-MM-DD) — cite those dates verbatim when you mention timing. "
             "Be direct and quantitative. 3-5 sentences. Never give investment advice."
         ),
         'suggestions': [
@@ -92,7 +96,12 @@ LEVELS = {
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-html, body, [class*="st-"] { font-family: 'Inter', sans-serif; }
+/*
+ * Do NOT use `[class*="st-"] { font-family: Inter }` — it overrides Streamlit header/sidebar
+ * Material Symbols icons; Inter has no those ligatures, so you see literal "keyboard_double_arrow_right".
+ */
+html, body { font-family: 'Inter', sans-serif; }
+.stApp .main .block-container { font-family: 'Inter', sans-serif; }
 
 .topbar {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -161,6 +170,28 @@ def get_top_signals(n=5):
     return pd.DataFrame(rows, columns=cols)
 
 
+def _format_signal_context_row(row):
+    """Attach a concrete DATE to each signal line for LLM context (avoids [date] placeholders)."""
+    d = row['DATE']
+    try:
+        ts = pd.to_datetime(d)
+        ds = 'unknown date' if pd.isna(ts) else ts.strftime('%Y-%m-%d')
+    except (TypeError, ValueError, OverflowError):
+        ds = str(d) if d is not None and str(d) != 'NaT' else 'unknown date'
+    return f"{ds}: {row['SUMMARY']}"
+
+
+def _format_insights_for_display(text: str) -> str:
+    """Escape HTML; break inline • bullets onto separate lines (LLM often emits one long line)."""
+    if not text:
+        return ""
+    t = html.escape(text.strip())
+    t = t.replace('\n', '<br>')
+    t = re.sub(r'\s+•\s+', '<br>• ', t)
+    t = re.sub(r'^(?:<br>)+', '', t)
+    return t
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def get_price_data(ticker, days=30):
     cols, rows = run_query(
@@ -203,12 +234,14 @@ def get_market_insights():
     sdf = get_top_signals(6)
     if sdf.empty:
         return None
-    signal_text = '\n'.join(f"- {row['SUMMARY']}" for _, row in sdf.iterrows())
+    signal_text = '\n'.join(f"- {_format_signal_context_row(row)}" for _, row in sdf.iterrows())
     prompt = (
         "You are a concise financial news writer. Based on these market signals, "
         "write 4-5 brief news-style bullet points. "
         "Cover anomalies, notable price moves, macro trends, and patterns. "
         "Each bullet: one sentence with specific numbers. "
+        "Formatting: start every bullet with • (bullet) and a space; put each bullet on its own line "
+        "(newline after each bullet). Never put two bullets on the same line. "
         "Do NOT give investment advice.\n\n"
         f"Signals:\n{signal_text}"
     )
@@ -288,7 +321,7 @@ def build_context(question):
         try:
             adf = get_top_signals(5)
             if not adf.empty:
-                lines = [f"  - {row['SUMMARY']}" for _, row in adf.iterrows()]
+                lines = [f"  - {_format_signal_context_row(row)}" for _, row in adf.iterrows()]
                 parts.append("Recent notable signals:\n" + '\n'.join(lines))
         except Exception as e:
             logger.warning("Failed to fetch signals: %s", e)
@@ -680,7 +713,7 @@ with _top_right:
                 insights = None
         if insights:
             st.markdown(
-                f'<div class="insight-card">{insights}</div>',
+                f'<div class="insight-card">{_format_insights_for_display(insights)}</div>',
                 unsafe_allow_html=True,
             )
         else:
