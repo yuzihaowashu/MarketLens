@@ -1,4 +1,11 @@
-streamlit
-snowflake-connector-python
-cryptography
-pandas
+# Streamlit app + Snowflake
+streamlit>=1.28,<2
+snowflake-connector-python>=3.0,<5
+cryptography>=41,<47
+python-dotenv>=1.0,<2
+# Pin so pip does not select pandas 3.x (no stable cp314 wheel yet → broken source builds on Python 3.14).
+pandas==2.3.3
+
+# Orchestration — Apache Airflow 2.x only (not 3.x)
+apache-airflow>=2.8.0,<3.0
+apache-airflow-providers-snowflake>=5.0,<6

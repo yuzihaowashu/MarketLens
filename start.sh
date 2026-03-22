@@ -48,7 +48,7 @@ fi
 source "$VENV_DIR/bin/activate"
 
 # ── Install dependencies ─────────────────────────────────────────────
-if ! python -c "import streamlit" 2>/dev/null; then
+if ! python -c "import streamlit, airflow" 2>/dev/null; then
     info "Installing Python dependencies..."
     pip install --quiet --upgrade pip
     pip install --quiet -r requirements.txt
