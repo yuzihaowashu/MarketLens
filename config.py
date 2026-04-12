@@ -84,3 +84,70 @@ ROLLING_WINDOW = 20
 # LLM
 # ---------------------------------------------------------------------------
 LLM_MODEL = 'llama3.1-70b'
+
+# ---------------------------------------------------------------------------
+# Config parsing helpers
+# ---------------------------------------------------------------------------
+
+def parse_env_bool(key: str, default: bool) -> bool:
+    """Parse a boolean env var accepting 1/true/yes/on and 0/false/no/off."""
+    val = os.environ.get(key, '').strip().lower()
+    if val in ('1', 'true', 'yes', 'on'):
+        return True
+    if val in ('0', 'false', 'no', 'off'):
+        return False
+    return default
+
+
+def parse_env_int(key: str, default: int,
+                  min_val: Optional[int] = None,
+                  max_val: Optional[int] = None) -> int:
+    """Parse an integer env var with optional min/max clamping."""
+    try:
+        v = int(os.environ.get(key, str(default)))
+    except (ValueError, TypeError):
+        v = default
+    if min_val is not None:
+        v = max(min_val, v)
+    if max_val is not None:
+        v = min(max_val, v)
+    return v
+
+
+def parse_env_list(key: str, default: list) -> list:
+    """Parse a comma-separated env var into a list of stripped strings."""
+    raw = os.environ.get(key, '').strip()
+    if not raw:
+        return list(default)
+    return [x.strip() for x in raw.split(',') if x.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Kafka
+# ---------------------------------------------------------------------------
+KAFKA_BOOTSTRAP     = _env_strip('KAFKA_BOOTSTRAP', 'localhost:9092') or 'localhost:9092'
+KAFKA_PRICES_TOPIC  = _env_strip('KAFKA_PRICES_TOPIC', 'raw.stock.prices') or 'raw.stock.prices'
+KAFKA_MACRO_TOPIC   = _env_strip('KAFKA_MACRO_TOPIC', 'raw.macro.indicators') or 'raw.macro.indicators'
+
+# ---------------------------------------------------------------------------
+# Ingestion
+# ---------------------------------------------------------------------------
+MAX_WORKERS              = parse_env_int('MAX_WORKERS', 4, min_val=1, max_val=16)
+FETCH_RETRY_ATTEMPTS     = parse_env_int('FETCH_RETRY_ATTEMPTS', 3, min_val=1, max_val=10)
+CIRCUIT_BREAKER_FAILURES = parse_env_int('CIRCUIT_BREAKER_FAILURES', 3, min_val=1)
+CIRCUIT_BREAKER_COOLDOWN = parse_env_int('CIRCUIT_BREAKER_COOLDOWN', 300, min_val=30)
+
+# ---------------------------------------------------------------------------
+# Notification
+# ---------------------------------------------------------------------------
+SLACK_WEBHOOK_URL = _env_strip('SLACK_WEBHOOK_URL')
+ALERT_EMAIL       = _env_strip('ALERT_EMAIL')
+SMTP_HOST         = _env_strip('SMTP_HOST', 'smtp.gmail.com') or 'smtp.gmail.com'
+SMTP_PORT         = parse_env_int('SMTP_PORT', 587)
+SMTP_USER         = _env_strip('SMTP_USER')
+SMTP_PASSWORD     = _env_strip('SMTP_PASSWORD')
+
+# ---------------------------------------------------------------------------
+# Pipeline observability
+# ---------------------------------------------------------------------------
+PIPELINE_LOG_ENABLED = parse_env_bool('PIPELINE_LOG_ENABLED', True)

@@ -131,6 +131,7 @@ html, body { font-family: 'Inter', sans-serif; }
 for _key, _default in [
     ('level', None), ('messages', []),
     ('pending_q', None), ('_transitioning', False),
+    ('page', 'chat'),
 ]:
     if _key not in st.session_state:
         st.session_state[_key] = _default
@@ -618,6 +619,27 @@ with st.sidebar:
         st.session_state._transitioning = True
         st.rerun()
 
+    if cfg['show_signals']:
+        st.markdown('---')
+        _page_options = ['Chat', 'Stock Deep Dive', 'Macro Overlay', 'Pipeline Health']
+        _chosen_page = st.radio(
+            'Navigate',
+            _page_options,
+            index=_page_options.index(
+                st.session_state.page.replace('_', ' ').title()
+                if st.session_state.page != 'chat' else 'Chat'
+            ),
+            key='_page_radio',
+            label_visibility='collapsed',
+        )
+        _page_key = _chosen_page.lower().replace(' ', '_')
+        if _page_key != st.session_state.page:
+            st.session_state.page = _page_key
+            st.rerun()
+
+    if cfg['show_signals'] and st.session_state.page != 'chat':
+        pass  # sidebar-only content for non-chat pages handled below
+
     if cfg['show_market_pulse']:
         st.markdown('---')
         st.markdown('**📈 Market Pulse**')
@@ -696,6 +718,259 @@ with st.sidebar:
             )
         else:
             st.caption("⚠ Could not load price chart.")
+
+# =====================================================================
+#  PAGE: STOCK DEEP DIVE
+# =====================================================================
+if st.session_state.page == 'stock_deep_dive':
+    st.markdown('#### 📈 Stock Deep Dive')
+    dd_ticker = st.selectbox(
+        'Select Ticker',
+        TICKERS,
+        format_func=lambda t: f'{TICKER_NAMES.get(t, t)} ({t})',
+        key='dd_ticker',
+    )
+    dd_period = st.radio('Period', ['30D', '90D', '180D'], horizontal=True, key='dd_period')
+    dd_days   = {'30D': 30, '90D': 90, '180D': 180}[dd_period]
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def get_anomaly_data(ticker, days):
+        cols, rows = run_query(
+            'SELECT DATE, DAILY_RETURN, AVG_RETURN_20D, VOLATILITY_20D, Z_SCORE, IS_ANOMALY '
+            'FROM V_ANOMALY_SCORES WHERE TICKER = %s AND DATE IS NOT NULL '
+            'ORDER BY DATE DESC LIMIT %s',
+            (ticker, days),
+        )
+        return pd.DataFrame(rows, columns=cols)
+
+    with st.spinner('Loading anomaly data...'):
+        try:
+            dd_df = get_anomaly_data(dd_ticker, dd_days)
+        except Exception as _e:
+            dd_df = pd.DataFrame()
+            st.warning(f'Could not load anomaly data: {_e}')
+
+    if not dd_df.empty:
+        dd_df['DATE'] = pd.to_datetime(dd_df['DATE'])
+        dd_df = dd_df.sort_values('DATE')
+        dd_df['DAILY_RETURN_PCT'] = dd_df['DAILY_RETURN'] * 100
+        dd_df['VOLATILITY_20D_PCT'] = dd_df['VOLATILITY_20D'] * 100
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown('**Daily Return & Z-Score**')
+            st.line_chart(dd_df.set_index('DATE')[['DAILY_RETURN_PCT', 'Z_SCORE']])
+        with col2:
+            st.markdown('**20-Day Rolling Volatility (%)**')
+            st.line_chart(dd_df.set_index('DATE')[['VOLATILITY_20D_PCT']])
+
+        anomalies = dd_df[dd_df['IS_ANOMALY'] == True].copy()
+        if not anomalies.empty:
+            anomalies['DAILY_RETURN_PCT'] = anomalies['DAILY_RETURN_PCT'].map('{:+.2f}%'.format)
+            anomalies['Z_SCORE'] = anomalies['Z_SCORE'].map('{:.2f}'.format)
+            st.markdown(f'**Anomaly Days ({len(anomalies)} found)**')
+            st.dataframe(
+                anomalies[['DATE', 'DAILY_RETURN_PCT', 'Z_SCORE']].rename(columns={
+                    'DATE': 'Date', 'DAILY_RETURN_PCT': 'Return', 'Z_SCORE': 'Z-Score',
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info('No anomaly days in the selected period.')
+    else:
+        st.info('No data available for this ticker.')
+    st.stop()
+
+# =====================================================================
+#  PAGE: MACRO OVERLAY
+# =====================================================================
+if st.session_state.page == 'macro_overlay':
+    st.markdown('#### 🏦 Macro Overlay')
+
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def get_fed_rate_data(days=365):
+        cols, rows = run_query(
+            'SELECT DATE, FED_FUNDS_RATE, RATE_CHANGE '
+            'FROM V_FED_RATE_CHANGES WHERE FED_FUNDS_RATE IS NOT NULL '
+            'ORDER BY DATE DESC LIMIT %s',
+            (days,),
+        )
+        return pd.DataFrame(rows, columns=cols)
+
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def get_cpi_data(months=24):
+        cols, rows = run_query(
+            'SELECT DATE, CPI_INDEX, CPI_MOM_CHANGE '
+            'FROM V_CPI_CHANGES WHERE CPI_INDEX IS NOT NULL '
+            'ORDER BY DATE DESC LIMIT %s',
+            (months,),
+        )
+        return pd.DataFrame(rows, columns=cols)
+
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def get_yield_curve_data():
+        try:
+            cols, rows = run_query(
+                'SELECT DATE, TREASURY_10Y, FED_FUNDS_RATE, CURVE_SPREAD, IS_INVERTED '
+                'FROM V_YIELD_CURVE ORDER BY DATE DESC LIMIT 40'
+            )
+            return pd.DataFrame(rows, columns=cols)
+        except Exception:
+            return pd.DataFrame()   # paid data not available
+
+    with st.spinner('Loading macro data...'):
+        try:
+            fed_df = get_fed_rate_data()
+        except Exception as _e:
+            fed_df = pd.DataFrame()
+            st.warning(f'Fed rate data unavailable: {_e}')
+        try:
+            cpi_df = get_cpi_data()
+        except Exception as _e:
+            cpi_df = pd.DataFrame()
+            st.warning(f'CPI data unavailable: {_e}')
+        yc_df = get_yield_curve_data()
+
+    tab1, tab2, tab3 = st.tabs(['Fed Funds Rate', 'CPI', 'Yield Curve'])
+
+    with tab1:
+        if not fed_df.empty:
+            fed_df['DATE'] = pd.to_datetime(fed_df['DATE'])
+            fed_df = fed_df.sort_values('DATE')
+            fed_df['FED_FUNDS_RATE_PCT'] = fed_df['FED_FUNDS_RATE'] * 100
+            st.line_chart(fed_df.set_index('DATE')[['FED_FUNDS_RATE_PCT']])
+            changes = fed_df[fed_df['RATE_CHANGE'].notna() & (fed_df['RATE_CHANGE'] != 0)].copy()
+            if not changes.empty:
+                changes['RATE_CHANGE_BPS'] = (changes['RATE_CHANGE'] * 10000).map('{:+.1f} bps'.format)
+                st.markdown('**Rate Changes**')
+                st.dataframe(changes[['DATE', 'FED_FUNDS_RATE_PCT', 'RATE_CHANGE_BPS']].rename(columns={
+                    'DATE': 'Date', 'FED_FUNDS_RATE_PCT': 'Rate (%)', 'RATE_CHANGE_BPS': 'Change',
+                }), use_container_width=True, hide_index=True)
+        else:
+            st.info('No Fed rate data available.')
+
+    with tab2:
+        if not cpi_df.empty:
+            cpi_df['DATE'] = pd.to_datetime(cpi_df['DATE'])
+            cpi_df = cpi_df.sort_values('DATE')
+            cpi_df['MOM_PCT'] = cpi_df['CPI_MOM_CHANGE'] * 100
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown('**CPI Index Level**')
+                st.line_chart(cpi_df.set_index('DATE')[['CPI_INDEX']])
+            with col2:
+                st.markdown('**Month-over-Month Change (%)**')
+                st.bar_chart(cpi_df.set_index('DATE')[['MOM_PCT']])
+        else:
+            st.info('No CPI data available.')
+
+    with tab3:
+        if not yc_df.empty:
+            yc_df['DATE'] = pd.to_datetime(yc_df['DATE'])
+            yc_df = yc_df.sort_values('DATE')
+            inversion_count = int(yc_df['IS_INVERTED'].sum()) if 'IS_INVERTED' in yc_df.columns else 0
+            if inversion_count > 0:
+                st.error(f'Yield curve currently inverted in {inversion_count} of {len(yc_df)} periods')
+            else:
+                st.success('Yield curve is not inverted in this window')
+            if 'TREASURY_10Y' in yc_df.columns:
+                st.line_chart(yc_df.set_index('DATE')[['TREASURY_10Y', 'FED_FUNDS_RATE', 'CURVE_SPREAD']])
+        else:
+            st.info(
+                'Yield curve data requires the SNOWFLAKE_PUBLIC_DATA_PAID marketplace subscription.\n'
+                'Set SNOWFLAKE_PAID_DATA_AVAILABLE=true and run signals/06_new_macro_signals.sql.'
+            )
+    st.stop()
+
+# =====================================================================
+#  PAGE: PIPELINE HEALTH
+# =====================================================================
+if st.session_state.page == 'pipeline_health':
+    st.markdown('#### ⚙️ Pipeline Health')
+
+    @st.cache_data(ttl=60, show_spinner=False)
+    def get_pipeline_runs(limit=30):
+        try:
+            cols, rows = run_query(
+                'SELECT RUN_ID, DAG_ID, TASK_ID, STATUS, ROW_COUNT, '
+                'ERROR_MSG, STARTED_AT, COMPLETED_AT, '
+                'DATEDIFF(\'second\', STARTED_AT, COMPLETED_AT) AS DURATION_SEC '
+                'FROM SCORPION_DB.MARKETLENS.PIPELINE_RUN_LOG '
+                'ORDER BY STARTED_AT DESC LIMIT %s',
+                (limit,),
+            )
+            return pd.DataFrame(rows, columns=cols), None
+        except Exception as _e:
+            return pd.DataFrame(), str(_e)
+
+    with st.spinner('Loading pipeline runs...'):
+        runs_df, runs_err = get_pipeline_runs()
+
+    if runs_err:
+        st.warning(
+            f'Pipeline log unavailable ({runs_err}). '
+            'Run migrations/01_add_raw_tables.sql to create PIPELINE_RUN_LOG.'
+        )
+    elif runs_df.empty:
+        st.info('No pipeline runs recorded yet. Trigger the marketlens_daily DAG to populate this table.')
+    else:
+        # Summary metrics
+        total     = len(runs_df)
+        completed = int((runs_df['STATUS'] == 'completed').sum())
+        failed    = int((runs_df['STATUS'] == 'failed').sum())
+        m1, m2, m3 = st.columns(3)
+        m1.metric('Total Task Runs', total)
+        m2.metric('Completed', completed)
+        m3.metric('Failed', failed, delta=f'-{failed}' if failed else None,
+                  delta_color='inverse')
+
+        # Status breakdown bar
+        if 'STATUS' in runs_df.columns:
+            status_counts = runs_df['STATUS'].value_counts().reset_index()
+            status_counts.columns = ['Status', 'Count']
+            st.bar_chart(status_counts.set_index('Status'))
+
+        # Raw log table
+        st.markdown('**Recent Task Runs**')
+        display_cols = [c for c in ['TASK_ID', 'STATUS', 'ROW_COUNT',
+                                     'DURATION_SEC', 'STARTED_AT', 'ERROR_MSG']
+                        if c in runs_df.columns]
+        st.dataframe(
+            runs_df[display_cols].rename(columns={
+                'TASK_ID': 'Task', 'STATUS': 'Status',
+                'ROW_COUNT': 'Rows', 'DURATION_SEC': 'Sec',
+                'STARTED_AT': 'Started', 'ERROR_MSG': 'Error',
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    # Raw price row count as a quick data freshness check
+    st.markdown('---')
+    st.markdown('**Data Freshness**')
+    col1, col2 = st.columns(2)
+    with col1:
+        try:
+            _, r = run_query('SELECT MAX(DATE), COUNT(*) FROM SCORPION_DB.MARKETLENS.RAW_STOCK_PRICES')
+            if r and r[0][0]:
+                st.metric('Latest price date', str(r[0][0])[:10])
+                st.metric('Total price rows', f'{r[0][1]:,}')
+            else:
+                st.info('RAW_STOCK_PRICES is empty.')
+        except Exception as _e:
+            st.caption(f'RAW_STOCK_PRICES unavailable: {_e}')
+    with col2:
+        try:
+            _, r = run_query('SELECT MAX(DATE), COUNT(*) FROM SCORPION_DB.MARKETLENS.RAW_MACRO_INDICATORS')
+            if r and r[0][0]:
+                st.metric('Latest macro date', str(r[0][0])[:10])
+                st.metric('Total macro rows', f'{r[0][1]:,}')
+            else:
+                st.info('RAW_MACRO_INDICATORS is empty.')
+        except Exception as _e:
+            st.caption(f'RAW_MACRO_INDICATORS unavailable: {_e}')
+    st.stop()
 
 # ── Top section: suggestions (left) + market insights (right) ────────
 if cfg['show_signals']:

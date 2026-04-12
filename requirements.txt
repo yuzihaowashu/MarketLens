@@ -9,3 +9,13 @@ pandas==2.3.3
 # Orchestration — Apache Airflow 2.x only (not 3.x)
 apache-airflow>=2.8.0,<3.0
 apache-airflow-providers-snowflake>=5.0,<6
+
+# Ingestion
+yfinance>=0.2,<1
+tenacity>=8.2,<10
+
+# Notification
+requests>=2.31,<3
+
+# Kafka (Phase 2 — install when ready to run the streaming layer)
+# kafka-python>=2.0,<3
