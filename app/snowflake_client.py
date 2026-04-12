@@ -3,6 +3,7 @@ import re
 import sys
 import logging
 
+import streamlit as st
 import snowflake.connector
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
@@ -21,6 +22,28 @@ from snowflake.connector.errors import ProgrammingError
 logger = logging.getLogger(__name__)
 
 _cached_connection = None
+
+
+@st.cache_resource(show_spinner="Connecting to Snowflake...")
+def _get_cached_connection():
+    """Create and cache a single Snowflake connection for the lifetime of the app process."""
+    key_path = SNOWFLAKE_PRIVATE_KEY_PATH
+    if not os.path.isfile(key_path):
+        raise FileNotFoundError(
+            f"Snowflake RSA key not found at {key_path}. "
+            "Set the SNOWFLAKE_PRIVATE_KEY env var or copy your key there."
+        )
+    conn = snowflake.connector.connect(
+        account=SNOWFLAKE_ACCOUNT,
+        user=SNOWFLAKE_USER,
+        private_key=_load_private_key(key_path),
+        database=SNOWFLAKE_DATABASE,
+        schema=SNOWFLAKE_SCHEMA,
+        warehouse=SNOWFLAKE_WAREHOUSE,
+        role=SNOWFLAKE_ROLE,
+    )
+    _activate_session(conn)
+    return conn
 
 
 _SAFE_IDENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_$]*$')
@@ -135,19 +158,29 @@ def get_connection(force_new=False):
     """Return a reusable Snowflake connection, reconnecting when stale."""
     global _cached_connection
 
+    # Prefer st.cache_resource connection (shared across all Streamlit sessions).
+    # Fall back to the module-level global when called outside a Streamlit context
+    # (e.g. migration scripts, DAG tasks).
+    try:
+        if not force_new:
+            conn = _get_cached_connection()
+            if not conn.is_closed():
+                return conn
+            # Cached connection is closed — clear the cache so it rebuilds.
+            _get_cached_connection.clear()
+        return _get_cached_connection()
+    except Exception:
+        # Outside Streamlit runtime: fall back to plain module-level cache.
+        pass
+
     if not force_new and _cached_connection is not None:
-        try:
-            cur = _cached_connection.cursor()
-            cur.execute("SELECT 1")
-            cur.close()
+        if not _cached_connection.is_closed():
             return _cached_connection
+        try:
+            _cached_connection.close()
         except Exception:
-            logger.debug("Cached connection stale, reconnecting")
-            try:
-                _cached_connection.close()
-            except Exception:
-                pass
-            _cached_connection = None
+            pass
+        _cached_connection = None
 
     key_path = SNOWFLAKE_PRIVATE_KEY_PATH
     if not os.path.isfile(key_path):
@@ -155,7 +188,6 @@ def get_connection(force_new=False):
             f"Snowflake RSA key not found at {key_path}. "
             "Set the SNOWFLAKE_PRIVATE_KEY env var or copy your key there."
         )
-
     _cached_connection = snowflake.connector.connect(
         account=SNOWFLAKE_ACCOUNT,
         user=SNOWFLAKE_USER,

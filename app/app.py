@@ -301,6 +301,73 @@ def get_signal_details(signal_type, entity, signal_date):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Module-level cached queries for Deep Dive, Macro, and Pipeline pages.
+# Defined here (not inside page blocks) so Streamlit can reuse the cache
+# across reruns without re-registering the function on every interaction.
+# ─────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_anomaly_data(ticker, days):
+    cols, rows = run_query(
+        'SELECT DATE, DAILY_RETURN, AVG_RETURN_20D, VOLATILITY_20D, Z_SCORE, IS_ANOMALY '
+        'FROM V_ANOMALY_SCORES WHERE TICKER = %s AND DATE IS NOT NULL '
+        'ORDER BY DATE DESC LIMIT %s',
+        (ticker, days),
+    )
+    return pd.DataFrame(rows, columns=cols)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_fed_rate_data(days=365):
+    cols, rows = run_query(
+        'SELECT DATE, FED_FUNDS_RATE, RATE_CHANGE '
+        'FROM V_FED_RATE_CHANGES WHERE FED_FUNDS_RATE IS NOT NULL '
+        'ORDER BY DATE DESC LIMIT %s',
+        (days,),
+    )
+    return pd.DataFrame(rows, columns=cols)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_cpi_data(months=24):
+    cols, rows = run_query(
+        'SELECT DATE, CPI_INDEX, CPI_MOM_CHANGE '
+        'FROM V_CPI_CHANGES WHERE CPI_INDEX IS NOT NULL '
+        'ORDER BY DATE DESC LIMIT %s',
+        (months,),
+    )
+    return pd.DataFrame(rows, columns=cols)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_yield_curve_data():
+    try:
+        cols, rows = run_query(
+            'SELECT DATE, TREASURY_10Y, FED_FUNDS_RATE, CURVE_SPREAD, IS_INVERTED '
+            'FROM V_YIELD_CURVE ORDER BY DATE DESC LIMIT 40'
+        )
+        return pd.DataFrame(rows, columns=cols)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_pipeline_runs(limit=30):
+    try:
+        cols, rows = run_query(
+            'SELECT RUN_ID, DAG_ID, TASK_ID, STATUS, ROW_COUNT, '
+            'ERROR_MSG, STARTED_AT, COMPLETED_AT, '
+            'DATEDIFF(\'second\', STARTED_AT, COMPLETED_AT) AS DURATION_SEC '
+            'FROM SCORPION_DB.MARKETLENS.PIPELINE_RUN_LOG '
+            'ORDER BY STARTED_AT DESC LIMIT %s',
+            (limit,),
+        )
+        return pd.DataFrame(rows, columns=cols), None
+    except Exception as _e:
+        return pd.DataFrame(), str(_e)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Context builder
 # ─────────────────────────────────────────────────────────────────────
 def build_context(question):
@@ -733,16 +800,6 @@ if st.session_state.page == 'stock_deep_dive':
     dd_period = st.radio('Period', ['30D', '90D', '180D'], horizontal=True, key='dd_period')
     dd_days   = {'30D': 30, '90D': 90, '180D': 180}[dd_period]
 
-    @st.cache_data(ttl=600, show_spinner=False)
-    def get_anomaly_data(ticker, days):
-        cols, rows = run_query(
-            'SELECT DATE, DAILY_RETURN, AVG_RETURN_20D, VOLATILITY_20D, Z_SCORE, IS_ANOMALY '
-            'FROM V_ANOMALY_SCORES WHERE TICKER = %s AND DATE IS NOT NULL '
-            'ORDER BY DATE DESC LIMIT %s',
-            (ticker, days),
-        )
-        return pd.DataFrame(rows, columns=cols)
-
     with st.spinner('Loading anomaly data...'):
         try:
             dd_df = get_anomaly_data(dd_ticker, dd_days)
@@ -787,37 +844,6 @@ if st.session_state.page == 'stock_deep_dive':
 # =====================================================================
 if st.session_state.page == 'macro_overlay':
     st.markdown('#### 🏦 Macro Overlay')
-
-    @st.cache_data(ttl=1800, show_spinner=False)
-    def get_fed_rate_data(days=365):
-        cols, rows = run_query(
-            'SELECT DATE, FED_FUNDS_RATE, RATE_CHANGE '
-            'FROM V_FED_RATE_CHANGES WHERE FED_FUNDS_RATE IS NOT NULL '
-            'ORDER BY DATE DESC LIMIT %s',
-            (days,),
-        )
-        return pd.DataFrame(rows, columns=cols)
-
-    @st.cache_data(ttl=1800, show_spinner=False)
-    def get_cpi_data(months=24):
-        cols, rows = run_query(
-            'SELECT DATE, CPI_INDEX, CPI_MOM_CHANGE '
-            'FROM V_CPI_CHANGES WHERE CPI_INDEX IS NOT NULL '
-            'ORDER BY DATE DESC LIMIT %s',
-            (months,),
-        )
-        return pd.DataFrame(rows, columns=cols)
-
-    @st.cache_data(ttl=1800, show_spinner=False)
-    def get_yield_curve_data():
-        try:
-            cols, rows = run_query(
-                'SELECT DATE, TREASURY_10Y, FED_FUNDS_RATE, CURVE_SPREAD, IS_INVERTED '
-                'FROM V_YIELD_CURVE ORDER BY DATE DESC LIMIT 40'
-            )
-            return pd.DataFrame(rows, columns=cols)
-        except Exception:
-            return pd.DataFrame()   # paid data not available
 
     with st.spinner('Loading macro data...'):
         try:
@@ -888,21 +914,6 @@ if st.session_state.page == 'macro_overlay':
 # =====================================================================
 if st.session_state.page == 'pipeline_health':
     st.markdown('#### ⚙️ Pipeline Health')
-
-    @st.cache_data(ttl=60, show_spinner=False)
-    def get_pipeline_runs(limit=30):
-        try:
-            cols, rows = run_query(
-                'SELECT RUN_ID, DAG_ID, TASK_ID, STATUS, ROW_COUNT, '
-                'ERROR_MSG, STARTED_AT, COMPLETED_AT, '
-                'DATEDIFF(\'second\', STARTED_AT, COMPLETED_AT) AS DURATION_SEC '
-                'FROM SCORPION_DB.MARKETLENS.PIPELINE_RUN_LOG '
-                'ORDER BY STARTED_AT DESC LIMIT %s',
-                (limit,),
-            )
-            return pd.DataFrame(rows, columns=cols), None
-        except Exception as _e:
-            return pd.DataFrame(), str(_e)
 
     with st.spinner('Loading pipeline runs...'):
         runs_df, runs_err = get_pipeline_runs()
