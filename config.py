@@ -22,7 +22,7 @@ def _env_strip(key: str, default: Optional[str] = None) -> Optional[str]:
 # Snowflake connection (override any value via environment variables)
 # ---------------------------------------------------------------------------
 SNOWFLAKE_ACCOUNT = _env_strip('SNOWFLAKE_ACCOUNT', 'SFEDU02-UNB02139') or 'SFEDU02-UNB02139'
-SNOWFLAKE_USER = _env_strip('SNOWFLAKE_USER', 'SCORPION') or 'SCORPION'
+SNOWFLAKE_USER = _env_strip('SNOWFLAKE_USER', 'GRIZZLY') or 'GRIZZLY'
 SNOWFLAKE_DATABASE = _env_strip('SNOWFLAKE_DATABASE', 'SCORPION_DB') or 'SCORPION_DB'
 SNOWFLAKE_SCHEMA = _env_strip('SNOWFLAKE_SCHEMA', 'MARKETLENS') or 'MARKETLENS'
 SNOWFLAKE_WAREHOUSE = _env_strip('SNOWFLAKE_WAREHOUSE', 'SCORPION_WH') or 'SCORPION_WH'
@@ -37,7 +37,7 @@ if _private_key_raw:
     )
 else:
     SNOWFLAKE_PRIVATE_KEY_PATH = os.path.expanduser(
-        '~/airflow/snowflake_rsa_key.p8'
+        '/Users/andrewhaggstrom/Desktop/CS Projects/Keys/rsa_key.p8'
     )
 
 # ---------------------------------------------------------------------------
@@ -73,6 +73,16 @@ MACRO_VARIABLES = {
 }
 
 CPI_VARIABLE = 'CPI:_All_items,_Seasonally_adjusted,_Monthly'
+
+# ---------------------------------------------------------------------------
+# FRED API (St. Louis Fed — https://fred.stlouisfed.org/docs/api/api_key.html)
+# ---------------------------------------------------------------------------
+FRED_API_KEY = _env_strip('FRED_API_KEY')
+
+FRED_SERIES_GDP                    = 'GDPC1'    # Real GDP, quarterly
+FRED_SERIES_HOUSING_STARTS         = 'HOUST'    # Housing starts, monthly SAAR
+FRED_SERIES_CONSUMER_SENTIMENT     = 'UMCSENT'  # UMich consumer sentiment, monthly
+FRED_SERIES_INFLATION_EXPECTATIONS = 'T10YIE'   # 10Y breakeven inflation, daily
 
 # ---------------------------------------------------------------------------
 # Signal thresholds

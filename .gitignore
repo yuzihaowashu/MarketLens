@@ -2,3 +2,5 @@
 __pycache__/
 .airflow/
 .env
+.DS_Store
+CLAUDE.md

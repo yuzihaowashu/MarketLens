@@ -85,6 +85,7 @@ run_sql_setup() {
         "signals/03_anomaly_scores.sql"
         "signals/04_macro_signals.sql"
         "signals/05_signal_summary.sql"
+        "migrations/02_add_fred_table.sql"
     )
 
     python3 - "$KEY_PATH" "${SQL_FILES[@]}" <<'PYEOF'

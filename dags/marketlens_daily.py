@@ -150,6 +150,34 @@ def _ingest_macro(**ctx):
         raise
 
 
+def _ingest_fred(**ctx):
+    """
+    Task 1c: Fetch macro series from the FRED API → MERGE into RAW_FRED_INDICATORS.
+    Runs in parallel with _ingest_prices and _ingest_macro.
+    If FRED_API_KEY is empty, the producer returns 0 and the task succeeds.
+    """
+    import config as cfg
+    from snowflake_client import get_connection
+    from ingestion.fred_producer import FredProducer
+
+    run_id     = ctx['run_id']
+    started_at = datetime.utcnow()
+    _log_run(run_id, 'ingest_fred', 'started', started_at=started_at)
+
+    try:
+        conn = get_connection()
+        n    = FredProducer(cfg.FRED_API_KEY).fetch_and_write_to_snowflake(conn)
+        logger.info('ingest_fred: wrote %d rows', n)
+        _log_run(run_id, 'ingest_fred', 'completed',
+                 row_count=n, started_at=started_at, completed_at=datetime.utcnow())
+        return n
+    except Exception as exc:
+        _log_run(run_id, 'ingest_fred', 'failed',
+                 error_msg=str(exc)[:500],
+                 started_at=started_at, completed_at=datetime.utcnow())
+        raise
+
+
 def _refresh_signals(**ctx):
     """
     Task 2: Re-execute the signal SQL view chain.
@@ -299,6 +327,11 @@ with DAG(
         python_callable=_ingest_macro,
     )
 
+    ingest_fred = PythonOperator(
+        task_id='ingest_fred',
+        python_callable=_ingest_fred,
+    )
+
     refresh_signals = PythonOperator(
         task_id='refresh_signals',
         python_callable=_refresh_signals,
@@ -316,4 +349,4 @@ with DAG(
 
     # ingest_prices and ingest_macro run in parallel, then signal refresh,
     # then anomaly check, then notifications
-    [ingest_prices, ingest_macro] >> refresh_signals >> anomaly_check >> notify
+    [ingest_prices, ingest_macro, ingest_fred] >> refresh_signals >> anomaly_check >> notify
