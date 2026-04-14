@@ -17,5 +17,9 @@ tenacity>=8.2,<10
 # Notification
 requests>=2.31,<3
 
+# SEC EDGAR HTML parsing
+beautifulsoup4>=4.12,<5
+lxml>=4.9,<6
+
 # Kafka (Phase 2 — install when ready to run the streaming layer)
 # kafka-python>=2.0,<3

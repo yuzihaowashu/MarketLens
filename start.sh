@@ -15,7 +15,7 @@ cd "$SCRIPT_DIR"
 
 PORT="${MARKETLENS_PORT:-8501}"
 VENV_DIR=".venv"
-KEY_PATH="${SNOWFLAKE_PRIVATE_KEY:-$HOME/airflow/snowflake_rsa_key.p8}"
+KEY_PATH="/Users/andrewhaggstrom/Desktop/CS Projects/Keys/rsa_key.p8"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -80,12 +80,14 @@ run_sql_setup() {
 
     SQL_FILES=(
         "setup.sql"
+        "migrations/02_add_fred_table.sql"
+        "migrations/03_add_sec_tables.sql"
         "signals/01_daily_returns.sql"
         "signals/02_rolling_volatility.sql"
         "signals/03_anomaly_scores.sql"
         "signals/04_macro_signals.sql"
+        "signals/07_sec_narratives.sql"
         "signals/05_signal_summary.sql"
-        "migrations/02_add_fred_table.sql"
     )
 
     python3 - "$KEY_PATH" "${SQL_FILES[@]}" <<'PYEOF'

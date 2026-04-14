@@ -178,6 +178,88 @@ def _ingest_fred(**ctx):
         raise
 
 
+def _ingest_sec_metadata(**ctx):
+    """Task 1d: Discover recent SEC filings → MERGE into RAW_SEC_FILINGS."""
+    import config as cfg
+    from snowflake_client import get_connection
+    from ingestion.sec_producer import SECProducer
+
+    run_id     = ctx['run_id']
+    started_at = datetime.utcnow()
+    _log_run(run_id, 'ingest_sec_metadata', 'started', started_at=started_at)
+
+    try:
+        if not cfg.SEC_USER_AGENT:
+            logger.warning('SEC_USER_AGENT not set — skipping SEC ingestion')
+            _log_run(run_id, 'ingest_sec_metadata', 'completed',
+                     row_count=0, started_at=started_at,
+                     completed_at=datetime.utcnow())
+            return 0
+        conn = get_connection()
+        n = SECProducer().fetch_filing_metadata(cfg.WATCHLIST_TICKERS, conn)
+        logger.info('ingest_sec_metadata: wrote %d rows', n)
+        _log_run(run_id, 'ingest_sec_metadata', 'completed',
+                 row_count=n, started_at=started_at, completed_at=datetime.utcnow())
+        return n
+    except Exception as exc:
+        _log_run(run_id, 'ingest_sec_metadata', 'failed',
+                 error_msg=str(exc)[:500],
+                 started_at=started_at, completed_at=datetime.utcnow())
+        raise
+
+
+def _ingest_sec_text(**ctx):
+    """Task 1e: Fetch primary-doc HTML for new filings → RAW_SEC_FILING_TEXT."""
+    import config as cfg
+    from snowflake_client import get_connection
+    from ingestion.sec_producer import SECProducer
+
+    run_id     = ctx['run_id']
+    started_at = datetime.utcnow()
+    _log_run(run_id, 'ingest_sec_text', 'started', started_at=started_at)
+
+    try:
+        if not cfg.SEC_USER_AGENT:
+            _log_run(run_id, 'ingest_sec_text', 'completed',
+                     row_count=0, started_at=started_at,
+                     completed_at=datetime.utcnow())
+            return 0
+        conn = get_connection()
+        n = SECProducer().fetch_filing_text(conn)
+        logger.info('ingest_sec_text: wrote %d chunks', n)
+        _log_run(run_id, 'ingest_sec_text', 'completed',
+                 row_count=n, started_at=started_at, completed_at=datetime.utcnow())
+        return n
+    except Exception as exc:
+        _log_run(run_id, 'ingest_sec_text', 'failed',
+                 error_msg=str(exc)[:500],
+                 started_at=started_at, completed_at=datetime.utcnow())
+        raise
+
+
+def _summarize_sec_filings(**ctx):
+    """Task 1f: Cortex-summarize filings with text → SEC_FILING_SUMMARIES."""
+    from snowflake_client import get_connection
+    from ingestion.sec_producer import SECProducer
+
+    run_id     = ctx['run_id']
+    started_at = datetime.utcnow()
+    _log_run(run_id, 'summarize_sec_filings', 'started', started_at=started_at)
+
+    try:
+        conn = get_connection()
+        n = SECProducer().summarize_filings(conn)
+        logger.info('summarize_sec_filings: wrote %d rows', n)
+        _log_run(run_id, 'summarize_sec_filings', 'completed',
+                 row_count=n, started_at=started_at, completed_at=datetime.utcnow())
+        return n
+    except Exception as exc:
+        _log_run(run_id, 'summarize_sec_filings', 'failed',
+                 error_msg=str(exc)[:500],
+                 started_at=started_at, completed_at=datetime.utcnow())
+        raise
+
+
 def _refresh_signals(**ctx):
     """
     Task 2: Re-execute the signal SQL view chain.
@@ -204,6 +286,7 @@ def _refresh_signals(**ctx):
         'V_ANOMALY_SCORES',
         'V_FED_RATE_CHANGES',
         'V_CPI_CHANGES',
+        'V_SEC_NARRATIVES',
         'V_SIGNAL_SUMMARY',
     ]
     try:
@@ -332,6 +415,27 @@ with DAG(
         python_callable=_ingest_fred,
     )
 
+    ingest_sec_metadata = PythonOperator(
+        task_id='ingest_sec_metadata',
+        python_callable=_ingest_sec_metadata,
+        retries=2,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    ingest_sec_text = PythonOperator(
+        task_id='ingest_sec_text',
+        python_callable=_ingest_sec_text,
+        retries=2,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    summarize_sec_filings = PythonOperator(
+        task_id='summarize_sec_filings',
+        python_callable=_summarize_sec_filings,
+        retries=2,
+        retry_delay=timedelta(minutes=5),
+    )
+
     refresh_signals = PythonOperator(
         task_id='refresh_signals',
         python_callable=_refresh_signals,
@@ -349,4 +453,5 @@ with DAG(
 
     # ingest_prices and ingest_macro run in parallel, then signal refresh,
     # then anomaly check, then notifications
-    [ingest_prices, ingest_macro, ingest_fred] >> refresh_signals >> anomaly_check >> notify
+    ingest_sec_metadata >> ingest_sec_text >> summarize_sec_filings
+    [ingest_prices, ingest_macro, ingest_fred, summarize_sec_filings] >> refresh_signals >> anomaly_check >> notify

@@ -158,6 +158,17 @@ SMTP_USER         = _env_strip('SMTP_USER')
 SMTP_PASSWORD     = _env_strip('SMTP_PASSWORD')
 
 # ---------------------------------------------------------------------------
+# SEC EDGAR
+# ---------------------------------------------------------------------------
+SEC_USER_AGENT           = _env_strip('SEC_USER_AGENT')
+SEC_FORMS                = parse_env_list('SEC_FORMS', ['10-K', '10-Q'])
+SEC_MAX_FILINGS_PER_RUN  = parse_env_int('SEC_MAX_FILINGS_PER_RUN', 20, min_val=1)
+SEC_CHUNK_CHARS          = parse_env_int('SEC_CHUNK_CHARS', 6000, min_val=500)
+SEC_SUMMARY_MODEL        = _env_strip('SEC_SUMMARY_MODEL', LLM_MODEL) or LLM_MODEL
+SEC_DEBUG                = parse_env_bool('SEC_DEBUG', False)
+SEC_REQUEST_SLEEP        = 0.11   # seconds between EDGAR requests (cap 10 req/s)
+
+# ---------------------------------------------------------------------------
 # Pipeline observability
 # ---------------------------------------------------------------------------
 PIPELINE_LOG_ENABLED = parse_env_bool('PIPELINE_LOG_ENABLED', True)
