@@ -82,11 +82,16 @@ run_sql_setup() {
         "setup.sql"
         "migrations/02_add_fred_table.sql"
         "migrations/03_add_sec_tables.sql"
+        "migrations/04_add_ticker_sector.sql"
         "signals/01_daily_returns.sql"
         "signals/02_rolling_volatility.sql"
         "signals/03_anomaly_scores.sql"
         "signals/04_macro_signals.sql"
         "signals/07_sec_narratives.sql"
+        "signals/08_rsi.sql"
+        "signals/09_ma_crossover.sql"
+        "signals/10_drawdown.sql"
+        "signals/11_sector_rotation.sql"
         "signals/05_signal_summary.sql"
     )
 
