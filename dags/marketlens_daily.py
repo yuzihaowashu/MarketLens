@@ -24,6 +24,7 @@ import uuid
 from datetime import date, datetime, timedelta
 
 from airflow import DAG
+from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
 # ---------------------------------------------------------------------------
@@ -260,52 +261,17 @@ def _summarize_sec_filings(**ctx):
         raise
 
 
-def _refresh_signals(**ctx):
-    """
-    Task 2: Re-execute the signal SQL view chain.
+def _log_dbt_build_start(**ctx):
+    """Record dbt build kickoff in PIPELINE_RUN_LOG so the dashboard sees it."""
+    _log_run(ctx['run_id'], 'refresh_signals', 'started',
+             started_at=datetime.utcnow())
 
-    The views are defined against the base views in setup.sql which read
-    from the free marketplace.  This task ensures any new rows in
-    RAW_STOCK_PRICES are visible to downstream queries by running a
-    lightweight SELECT that materialises the view plan.
 
-    NOTE: Snowflake views are not materialized; this task queries each
-    view to force a plan refresh and validate that no view is broken.
-    A SnowflakeOperator could also be used here with the provider package.
-    """
-    from snowflake_client import get_connection
-
-    run_id     = ctx['run_id']
-    started_at = datetime.utcnow()
-    _log_run(run_id, 'refresh_signals', 'started', started_at=started_at)
-
-    views = [
-        'V_STOCK_PRICES',
-        'V_DAILY_RETURNS',
-        'V_ROLLING_VOLATILITY',
-        'V_ANOMALY_SCORES',
-        'V_FED_RATE_CHANGES',
-        'V_CPI_CHANGES',
-        'V_SEC_NARRATIVES',
-        'V_SIGNAL_SUMMARY',
-    ]
-    try:
-        conn   = get_connection()
-        cursor = conn.cursor()
-        for view in views:
-            cursor.execute(
-                f'SELECT COUNT(*) FROM SCORPION_DB.MARKETLENS.{view}'
-            )
-            count = cursor.fetchone()[0]
-            logger.info('View %s has %d rows', view, count)
-        cursor.close()
-        _log_run(run_id, 'refresh_signals', 'completed',
-                 started_at=started_at, completed_at=datetime.utcnow())
-    except Exception as exc:
-        _log_run(run_id, 'refresh_signals', 'failed',
-                 error_msg=str(exc)[:500],
-                 started_at=started_at, completed_at=datetime.utcnow())
-        raise
+def _log_dbt_build_end(**ctx):
+    """Record dbt build completion. Runs only if the BashOperator succeeded."""
+    _log_run(ctx['run_id'], 'refresh_signals', 'completed',
+             started_at=datetime.utcnow(),
+             completed_at=datetime.utcnow())
 
 
 def _anomaly_check(**ctx):
@@ -436,9 +402,43 @@ with DAG(
         retry_delay=timedelta(minutes=5),
     )
 
-    refresh_signals = PythonOperator(
+    # Signal refresh is now a `dbt build` invocation. dbt builds every model
+    # listed in dbt/models/ and runs all configured tests — any test failure
+    # aborts the DAG so anomaly_check never queries a stale/broken view.
+    log_dbt_start = PythonOperator(
+        task_id='log_dbt_start',
+        python_callable=_log_dbt_build_start,
+    )
+
+    refresh_signals = BashOperator(
         task_id='refresh_signals',
-        python_callable=_refresh_signals,
+        bash_command=(
+            'cd "$MARKETLENS_ROOT/dbt" && '
+            'dbt deps --profiles-dir . && '
+            'if [ "$SNOWFLAKE_PAID_DATA_AVAILABLE" = "true" ]; then '
+            '  dbt build --profiles-dir . --select +signal_summary+; '
+            'else '
+            '  dbt build --profiles-dir . --select +signal_summary+ '
+            '    --exclude stg_10y_treasury+ stg_unemployment+; '
+            'fi'
+        ),
+        env={
+            'MARKETLENS_ROOT': _ROOT_DIR,
+            'SNOWFLAKE_PAID_DATA_AVAILABLE': os.environ.get('SNOWFLAKE_PAID_DATA_AVAILABLE', ''),
+            'SNOWFLAKE_PRIVATE_KEY_PATH':    os.environ.get('SNOWFLAKE_PRIVATE_KEY_PATH', ''),
+            'SNOWFLAKE_ACCOUNT':             os.environ.get('SNOWFLAKE_ACCOUNT', ''),
+            'SNOWFLAKE_USER':                os.environ.get('SNOWFLAKE_USER', ''),
+            'SNOWFLAKE_ROLE':                os.environ.get('SNOWFLAKE_ROLE', ''),
+            'SNOWFLAKE_DATABASE':            os.environ.get('SNOWFLAKE_DATABASE', ''),
+            'SNOWFLAKE_WAREHOUSE':           os.environ.get('SNOWFLAKE_WAREHOUSE', ''),
+            'SNOWFLAKE_SCHEMA':              os.environ.get('SNOWFLAKE_SCHEMA', ''),
+        },
+        append_env=True,
+    )
+
+    log_dbt_end = PythonOperator(
+        task_id='log_dbt_end',
+        python_callable=_log_dbt_build_end,
     )
 
     anomaly_check = PythonOperator(
@@ -451,7 +451,9 @@ with DAG(
         python_callable=_notify,
     )
 
-    # ingest_prices and ingest_macro run in parallel, then signal refresh,
-    # then anomaly check, then notifications
+    # ingest_prices and ingest_macro run in parallel, then dbt refresh
+    # (wrapped with PIPELINE_RUN_LOG markers), then anomaly check, then notify.
     ingest_sec_metadata >> ingest_sec_text >> summarize_sec_filings
-    [ingest_prices, ingest_macro, ingest_fred, summarize_sec_filings] >> refresh_signals >> anomaly_check >> notify
+    [ingest_prices, ingest_macro, ingest_fred, summarize_sec_filings] \
+        >> log_dbt_start >> refresh_signals >> log_dbt_end \
+        >> anomaly_check >> notify

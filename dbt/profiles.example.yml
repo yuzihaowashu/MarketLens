@@ -1,0 +1,20 @@
+# Copy this file to profiles.yml (which is gitignored) and it will be picked up
+# automatically when running `dbt` from inside the dbt/ directory, provided you
+# pass `--profiles-dir .` or set DBT_PROFILES_DIR=./dbt.
+#
+# All values are sourced from the same env vars that config.py reads, so no
+# duplication of secrets is required — export them in your shell or .env.
+marketlens:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account:           "{{ env_var('SNOWFLAKE_ACCOUNT', 'SFEDU02-UNB02139') }}"
+      user:              "{{ env_var('SNOWFLAKE_USER', 'GRIZZLY') }}"
+      role:              "{{ env_var('SNOWFLAKE_ROLE', 'TRAINING_ROLE') }}"
+      database:          "{{ env_var('SNOWFLAKE_DATABASE', 'SCORPION_DB') }}"
+      warehouse:         "{{ env_var('SNOWFLAKE_WAREHOUSE', 'SCORPION_WH') }}"
+      schema:            "{{ env_var('SNOWFLAKE_SCHEMA', 'MARKETLENS') }}"
+      private_key_path:  "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      threads: 4
+      client_session_keep_alive: false

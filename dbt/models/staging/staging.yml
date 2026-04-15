@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: stg_stock_prices
+    description: |
+      Tidy OHLCV per (ticker, date) for the MarketLens watchlist, pivoted from
+      the Snowflake Marketplace STOCK_PRICE_TIMESERIES share.
+      Materializes as view V_STOCK_PRICES.
+    columns:
+      - name: TICKER
+        description: "Ticker symbol. One of the watchlist tickers in config.WATCHLIST_TICKERS."
+        tests:
+          - not_null
+      - name: DATE
+        description: "Trading date."
+        tests:
+          - not_null
+      - name: CLOSE_PRICE
+        description: "Post-market adjusted close price."
+      - name: OPEN_PRICE
+      - name: HIGH_PRICE
+      - name: LOW_PRICE
+      - name: VOLUME
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [TICKER, DATE]
+
+  - name: stg_fed_funds
+    description: "Daily Effective Federal Funds Rate (EFFR_PCT). Materializes as V_FED_FUNDS_RATE."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: FED_FUNDS_RATE
+        description: "Fed funds rate as a decimal (e.g. 0.0525 = 5.25%)."
+
+  - name: stg_cpi
+    description: "Monthly CPI All-Items seasonally adjusted. Materializes as V_CPI."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: CPI_INDEX
+        description: "CPI index value."
+
+  - name: stg_10y_treasury
+    description: |
+      10-Year Treasury yield, quarterly. Requires the SNOWFLAKE_PUBLIC_DATA_PAID
+      marketplace share. Materializes as V_10Y_TREASURY.
+    columns:
+      - name: DATE
+      - name: YIELD_PCT
+        description: "10Y yield, percent."
+
+  - name: stg_unemployment
+    description: |
+      National unemployment rate, monthly. Requires the paid marketplace share.
+      Materializes as V_UNEMPLOYMENT_RATE.
+    columns:
+      - name: DATE
+      - name: UNEMPLOYMENT_PCT
+      - name: GEO_ID
+      - name: SERIES_TITLE

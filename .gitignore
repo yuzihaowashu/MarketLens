@@ -4,3 +4,9 @@ __pycache__/
 .env
 .DS_Store
 CLAUDE.md
+
+# dbt
+dbt/profiles.yml
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
