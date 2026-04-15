@@ -1,0 +1,198 @@
+version: 2
+
+models:
+  # ---------------------------------------------------------------------------
+  # Prices
+  # ---------------------------------------------------------------------------
+  - name: daily_returns
+    description: "Per-ticker daily percent return. Materializes as V_DAILY_RETURNS."
+    columns:
+      - name: TICKER
+        tests: [not_null]
+      - name: DATE
+        tests: [not_null]
+      - name: CLOSE_PRICE
+      - name: PREV_CLOSE
+      - name: DAILY_RETURN
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [TICKER, DATE]
+
+  - name: rolling_volatility
+    description: "20-day rolling mean and stddev of daily returns. Materializes as V_ROLLING_VOLATILITY."
+    columns:
+      - name: TICKER
+        tests: [not_null]
+      - name: DATE
+        tests: [not_null]
+      - name: DAILY_RETURN
+      - name: AVG_RETURN_20D
+      - name: VOLATILITY_20D
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [TICKER, DATE]
+
+  - name: anomaly_scores
+    description: "Z-score of today's return vs 20d rolling distribution. Flags |z|>2 as anomaly. Materializes as V_ANOMALY_SCORES."
+    columns:
+      - name: TICKER
+        tests: [not_null]
+      - name: DATE
+        tests: [not_null]
+      - name: Z_SCORE
+      - name: IS_ANOMALY
+        description: "TRUE when |Z_SCORE| > 2.0."
+        tests:
+          - accepted_values:
+              values: [true, false]
+              quote: false
+
+  - name: rsi_14
+    description: "14-day Relative Strength Index with state classification. Materializes as V_RSI_14."
+    columns:
+      - name: TICKER
+        tests: [not_null]
+      - name: DATE
+        tests: [not_null]
+      - name: RSI_14
+        description: "RSI value in [0, 100]. NULL during the 14-day warm-up."
+      - name: RSI_STATE
+        description: "Classification: OVERBOUGHT (>70), OVERSOLD (<30), NEUTRAL."
+        tests:
+          - accepted_values:
+              values: [OVERBOUGHT, OVERSOLD, NEUTRAL]
+
+  - name: ma_crossover
+    description: "50-day and 200-day SMA with golden/death cross detection. Materializes as V_MA_CROSSOVER."
+    columns:
+      - name: TICKER
+        tests: [not_null]
+      - name: DATE
+        tests: [not_null]
+      - name: SMA_50
+      - name: SMA_200
+      - name: CROSSOVER_EVENT
+        description: "GOLDEN_CROSS when SMA50 crosses above SMA200, DEATH_CROSS when it crosses below, NULL otherwise."
+        tests:
+          - accepted_values:
+              values: [GOLDEN_CROSS, DEATH_CROSS]
+              config: {where: "CROSSOVER_EVENT IS NOT NULL"}
+
+  - name: drawdown
+    description: "Distance from 252-trading-day rolling high. Classifies CORRECTION (-10% to -20%) and BEAR (< -20%). Materializes as V_DRAWDOWN."
+    columns:
+      - name: TICKER
+        tests: [not_null]
+      - name: DATE
+        tests: [not_null]
+      - name: HIGH_52W
+      - name: DRAWDOWN_PCT
+      - name: DRAWDOWN_STATE
+        tests:
+          - accepted_values:
+              values: [CORRECTION, BEAR]
+              config: {where: "DRAWDOWN_STATE IS NOT NULL"}
+
+  - name: sector_rotation
+    description: "Average 20-day return per sector, ranked. Excludes the 'Index' bucket. Materializes as V_SECTOR_ROTATION."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: SECTOR
+        tests: [not_null]
+      - name: AVG_20D_RETURN
+      - name: SECTOR_RANK
+        description: "DENSE_RANK by AVG_20D_RETURN per date (1 = leading)."
+        tests: [not_null]
+
+  # ---------------------------------------------------------------------------
+  # Macro
+  # ---------------------------------------------------------------------------
+  - name: fed_rate_changes
+    description: "Day-over-day Fed Funds Rate delta. Materializes as V_FED_RATE_CHANGES."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: FED_FUNDS_RATE
+      - name: PREV_RATE
+      - name: RATE_CHANGE
+
+  - name: cpi_changes
+    description: "Month-over-month CPI percent change. Materializes as V_CPI_CHANGES."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: CPI_INDEX
+      - name: CPI_MOM_CHANGE
+
+  - name: yield_curve
+    description: "10Y Treasury minus Fed Funds Rate spread. Requires paid marketplace share. Materializes as V_YIELD_CURVE."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: TREASURY_10Y
+      - name: FED_FUNDS_RATE
+      - name: CURVE_SPREAD
+      - name: IS_INVERTED
+
+  - name: yield_curve_signals
+    description: "Dates where inversion status flipped. Materializes as V_YIELD_CURVE_SIGNALS."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: FLIP_EVENT
+        tests:
+          - accepted_values:
+              values: [INVERSION_START, INVERSION_END]
+
+  # ---------------------------------------------------------------------------
+  # SEC
+  # ---------------------------------------------------------------------------
+  - name: sec_narratives
+    description: "Latest Cortex-summarized filing per (ticker, form_type). Materializes as V_SEC_NARRATIVES."
+    columns:
+      - name: TICKER
+        tests: [not_null]
+      - name: FORM_TYPE
+        tests: [not_null]
+      - name: FILING_DATE
+      - name: MANAGEMENT_TONE
+        description: "Free-form tone label produced by Cortex (POSITIVE, NEGATIVE, CAUTIOUS, etc.)."
+
+  # ---------------------------------------------------------------------------
+  # Signal summary — the 6-column canonical feed consumed by app/app.py
+  # and dags/marketlens_daily.py. Do not modify this contract without updating
+  # both consumers.
+  # ---------------------------------------------------------------------------
+  - name: signal_summary
+    description: |
+      Unified signal feed. Six-column contract:
+      (DATE, SIGNAL_TYPE, ENTITY, MAGNITUDE, SALIENCE_SCORE, SUMMARY).
+      Materializes as V_SIGNAL_SUMMARY.
+    columns:
+      - name: DATE
+        description: "Date the signal fired on."
+      - name: SIGNAL_TYPE
+        description: "Category. One of: STOCK_ANOMALY, FED_RATE_CHANGE, CPI_CHANGE, SEC_FILING, RSI_EXTREME, MA_CROSSOVER, DRAWDOWN, SECTOR_ROTATION."
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - STOCK_ANOMALY
+                - FED_RATE_CHANGE
+                - CPI_CHANGE
+                - SEC_FILING
+                - RSI_EXTREME
+                - MA_CROSSOVER
+                - DRAWDOWN
+                - SECTOR_ROTATION
+      - name: ENTITY
+        description: "Subject of the signal (ticker, macro indicator name, sector)."
+        tests: [not_null]
+      - name: MAGNITUDE
+        description: "Directional numeric (percent, bps, etc.). May be NULL for narrative signals."
+      - name: SALIENCE_SCORE
+        description: "Absolute importance — used to sort the feed. Always non-negative."
+      - name: SUMMARY
+        description: "Human-readable one-line summary shown in Slack/email/Streamlit."
+        tests: [not_null]

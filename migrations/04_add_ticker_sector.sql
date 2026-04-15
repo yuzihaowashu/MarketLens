@@ -1,0 +1,22 @@
+USE SCHEMA SCORPION_DB.MARKETLENS;
+
+CREATE TABLE IF NOT EXISTS DIM_TICKER_SECTOR (
+    TICKER VARCHAR(20) PRIMARY KEY,
+    SECTOR VARCHAR(50) NOT NULL
+);
+
+MERGE INTO DIM_TICKER_SECTOR t
+USING (
+    SELECT 'AAPL'  AS TICKER, 'Technology'             AS SECTOR UNION ALL
+    SELECT 'MSFT',  'Technology'             UNION ALL
+    SELECT 'GOOGL', 'Technology'             UNION ALL
+    SELECT 'NVDA',  'Technology'             UNION ALL
+    SELECT 'META',  'Technology'             UNION ALL
+    SELECT 'AMZN',  'Consumer Discretionary' UNION ALL
+    SELECT 'TSLA',  'Consumer Discretionary' UNION ALL
+    SELECT 'SPY',   'Index'                  UNION ALL
+    SELECT 'QQQ',   'Index'
+) s
+ON t.TICKER = s.TICKER
+WHEN MATCHED THEN UPDATE SET SECTOR = s.SECTOR
+WHEN NOT MATCHED THEN INSERT (TICKER, SECTOR) VALUES (s.TICKER, s.SECTOR);

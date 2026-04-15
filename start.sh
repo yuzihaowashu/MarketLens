@@ -15,7 +15,7 @@ cd "$SCRIPT_DIR"
 
 PORT="${MARKETLENS_PORT:-8501}"
 VENV_DIR=".venv"
-KEY_PATH="${SNOWFLAKE_PRIVATE_KEY:-$HOME/airflow/snowflake_rsa_key.p8}"
+KEY_PATH="/Users/andrewhaggstrom/Desktop/CS Projects/Keys/rsa_key.p8"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -75,16 +75,21 @@ EOF
 fi
 
 # ── SQL setup (optional) ─────────────────────────────────────────────
+# Runs in two phases:
+#   1. Execute DDL from setup.sql + migrations/*.sql (raw tables, dim tables,
+#      base views that dbt sources). These are producer-owned schemas and
+#      must exist before dbt runs.
+#   2. `dbt build` inside dbt/ — transforms, tests, and materializes every
+#      V_* view the app and DAG depend on.
+# Legacy signals/*.sql files are kept on disk for rollback but are NOT run.
 run_sql_setup() {
     info "Running Snowflake SQL setup..."
 
     SQL_FILES=(
         "setup.sql"
-        "signals/01_daily_returns.sql"
-        "signals/02_rolling_volatility.sql"
-        "signals/03_anomaly_scores.sql"
-        "signals/04_macro_signals.sql"
-        "signals/05_signal_summary.sql"
+        "migrations/02_add_fred_table.sql"
+        "migrations/03_add_sec_tables.sql"
+        "migrations/04_add_ticker_sector.sql"
     )
 
     python3 - "$KEY_PATH" "${SQL_FILES[@]}" <<'PYEOF'
@@ -112,13 +117,31 @@ try:
             clean = '\n'.join(lines).strip()
             if clean:
                 cursor.execute(clean)
-    print("  SQL setup complete.")
+    print("  DDL setup complete.")
 finally:
     cursor.close()
     conn.close()
 PYEOF
 
-    ok "All SQL files executed successfully."
+    ok "DDL files executed successfully."
+
+    info "Running dbt build (transforms + tests)..."
+    export SNOWFLAKE_PRIVATE_KEY_PATH="$KEY_PATH"
+    (
+        cd dbt
+        if [[ ! -f profiles.yml ]]; then
+            cp profiles.example.yml profiles.yml
+            info "Copied profiles.example.yml → profiles.yml."
+        fi
+        dbt deps  --profiles-dir .
+        # --exclude paid models by default; re-enable with SNOWFLAKE_PAID_DATA_AVAILABLE=true.
+        if [[ "${SNOWFLAKE_PAID_DATA_AVAILABLE:-false}" == "true" ]]; then
+            dbt build --profiles-dir .
+        else
+            dbt build --profiles-dir . --exclude stg_10y_treasury+ stg_unemployment+
+        fi
+    )
+    ok "dbt build complete."
 }
 
 if [[ "$1" == "--setup" || "$1" == "--setup-only" ]]; then

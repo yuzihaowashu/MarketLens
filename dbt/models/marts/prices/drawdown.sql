@@ -1,0 +1,23 @@
+{{ config(alias='V_DRAWDOWN') }}
+
+WITH rolling AS (
+    SELECT
+        TICKER,
+        DATE,
+        CLOSE_PRICE,
+        MAX(CLOSE_PRICE) OVER (PARTITION BY TICKER ORDER BY DATE ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS HIGH_52W
+    FROM {{ ref('stg_stock_prices') }}
+)
+SELECT
+    TICKER,
+    DATE,
+    CLOSE_PRICE,
+    HIGH_52W,
+    (CLOSE_PRICE - HIGH_52W) / NULLIF(HIGH_52W, 0) AS DRAWDOWN_PCT,
+    CASE
+        WHEN HIGH_52W IS NULL OR HIGH_52W = 0                   THEN NULL
+        WHEN (CLOSE_PRICE - HIGH_52W) / HIGH_52W <= -0.20       THEN 'BEAR'
+        WHEN (CLOSE_PRICE - HIGH_52W) / HIGH_52W <= -0.10       THEN 'CORRECTION'
+        ELSE NULL
+    END AS DRAWDOWN_STATE
+FROM rolling

@@ -384,6 +384,24 @@ def build_context(question):
                     )
             except Exception as e:
                 logger.warning("Failed to fetch price for %s: %s", t, e)
+            try:
+                _, r = run_query(
+                    "SELECT FORM_TYPE, FILING_DATE, MANAGEMENT_TONE, "
+                    "REVENUE_NARRATIVE, GUIDANCE_NARRATIVE, RISK_NARRATIVE "
+                    "FROM V_SEC_NARRATIVES WHERE TICKER = %s "
+                    "ORDER BY FILING_DATE DESC LIMIT 1",
+                    (t,),
+                )
+                if r:
+                    form, fdate, tone, rev, guid, risk = r[0]
+                    parts.append(
+                        f"{t} latest {form} filed {fdate} (tone: {tone or 'n/a'}).\n"
+                        f"  Revenue: {(rev or '')[:300]}\n"
+                        f"  Guidance: {(guid or '')[:300]}\n"
+                        f"  Risk: {(risk or '')[:300]}"
+                    )
+            except Exception as e:
+                logger.warning("Failed to fetch SEC narrative for %s: %s", t, e)
 
     if any(kw in q for kw in ['anomal', 'unusual', 'weird', 'strange', 'signal']):
         try:

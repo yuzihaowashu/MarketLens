@@ -28,8 +28,8 @@ MarketLens is a financial data engineering pipeline and interactive dashboard bu
 ├─────────────────────────┴────────────────────────────────────┤
 │  Data Warehouse (Snowflake)                                  │
 │  RAW_STOCK_PRICES · RAW_MACRO_INDICATORS · PIPELINE_RUN_LOG  │
-│  Signal views: daily returns, volatility, Z-scores,         │
-│  Fed rate changes, CPI changes, yield curve, summary        │
+│  Signal models (dbt, materialized as V_* views):            │
+│    staging → price marts → macro marts → signal_summary     │
 ├──────────────────────────────────────────────────────────────┤
 │  Notification Layer                                          │
 │  SlackSender · EmailSender · broadcast (fail-open)          │
@@ -287,6 +287,36 @@ All 69 tests run without a live Snowflake connection (Snowflake calls are mocked
 | `tests/test_yfinance_producer.py` | normalization, Snowflake write, Kafka publish |
 | `tests/test_notification.py` | `broadcast`, `SlackSender`, `EmailSender` |
 | `tests/test_dag_import.py` | DAG structure (AST-based, no Airflow runtime needed) |
+| `tests/test_dbt_project.py` | dbt project structure: aliases, docs, ref/source graph integrity |
+
+---
+
+## dbt (signals layer)
+
+The signals layer is a dbt project at `dbt/`. Models materialize as views and
+keep the legacy `V_*` names via `{{ config(alias='V_...') }}`, so every app/DAG
+query works unchanged.
+
+```bash
+# One-time: copy the template and export env vars (config.py reads the same ones)
+cp dbt/profiles.example.yml dbt/profiles.yml
+
+# Build every model + run every test
+cd dbt && dbt deps --profiles-dir . && dbt build --profiles-dir .
+
+# Exclude paid-marketplace models
+dbt build --profiles-dir . --exclude stg_10y_treasury+ stg_unemployment+
+
+# Generate the lineage graph
+dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
+```
+
+The DAG runs `dbt build --select +signal_summary+` in its `refresh_signals`
+task. A failing dbt test aborts the DAG before the notification step ever sees
+stale data.
+
+Legacy `signals/*.sql` files remain on disk as a rollback path but are no
+longer executed by `start.sh --setup`.
 
 ---
 

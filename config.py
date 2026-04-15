@@ -22,7 +22,7 @@ def _env_strip(key: str, default: Optional[str] = None) -> Optional[str]:
 # Snowflake connection (override any value via environment variables)
 # ---------------------------------------------------------------------------
 SNOWFLAKE_ACCOUNT = _env_strip('SNOWFLAKE_ACCOUNT', 'SFEDU02-UNB02139') or 'SFEDU02-UNB02139'
-SNOWFLAKE_USER = _env_strip('SNOWFLAKE_USER', 'SCORPION') or 'SCORPION'
+SNOWFLAKE_USER = _env_strip('SNOWFLAKE_USER', 'GRIZZLY') or 'GRIZZLY'
 SNOWFLAKE_DATABASE = _env_strip('SNOWFLAKE_DATABASE', 'SCORPION_DB') or 'SCORPION_DB'
 SNOWFLAKE_SCHEMA = _env_strip('SNOWFLAKE_SCHEMA', 'MARKETLENS') or 'MARKETLENS'
 SNOWFLAKE_WAREHOUSE = _env_strip('SNOWFLAKE_WAREHOUSE', 'SCORPION_WH') or 'SCORPION_WH'
@@ -37,7 +37,7 @@ if _private_key_raw:
     )
 else:
     SNOWFLAKE_PRIVATE_KEY_PATH = os.path.expanduser(
-        '~/airflow/snowflake_rsa_key.p8'
+        '/Users/andrewhaggstrom/Desktop/CS Projects/Keys/rsa_key.p8'
     )
 
 # ---------------------------------------------------------------------------
@@ -73,6 +73,16 @@ MACRO_VARIABLES = {
 }
 
 CPI_VARIABLE = 'CPI:_All_items,_Seasonally_adjusted,_Monthly'
+
+# ---------------------------------------------------------------------------
+# FRED API (St. Louis Fed — https://fred.stlouisfed.org/docs/api/api_key.html)
+# ---------------------------------------------------------------------------
+FRED_API_KEY = _env_strip('FRED_API_KEY')
+
+FRED_SERIES_GDP                    = 'GDPC1'    # Real GDP, quarterly
+FRED_SERIES_HOUSING_STARTS         = 'HOUST'    # Housing starts, monthly SAAR
+FRED_SERIES_CONSUMER_SENTIMENT     = 'UMCSENT'  # UMich consumer sentiment, monthly
+FRED_SERIES_INFLATION_EXPECTATIONS = 'T10YIE'   # 10Y breakeven inflation, daily
 
 # ---------------------------------------------------------------------------
 # Signal thresholds
@@ -146,6 +156,17 @@ SMTP_HOST         = _env_strip('SMTP_HOST', 'smtp.gmail.com') or 'smtp.gmail.com
 SMTP_PORT         = parse_env_int('SMTP_PORT', 587)
 SMTP_USER         = _env_strip('SMTP_USER')
 SMTP_PASSWORD     = _env_strip('SMTP_PASSWORD')
+
+# ---------------------------------------------------------------------------
+# SEC EDGAR
+# ---------------------------------------------------------------------------
+SEC_USER_AGENT           = _env_strip('SEC_USER_AGENT')
+SEC_FORMS                = parse_env_list('SEC_FORMS', ['10-K', '10-Q'])
+SEC_MAX_FILINGS_PER_RUN  = parse_env_int('SEC_MAX_FILINGS_PER_RUN', 20, min_val=1)
+SEC_CHUNK_CHARS          = parse_env_int('SEC_CHUNK_CHARS', 6000, min_val=500)
+SEC_SUMMARY_MODEL        = _env_strip('SEC_SUMMARY_MODEL', LLM_MODEL) or LLM_MODEL
+SEC_DEBUG                = parse_env_bool('SEC_DEBUG', False)
+SEC_REQUEST_SLEEP        = 0.11   # seconds between EDGAR requests (cap 10 req/s)
 
 # ---------------------------------------------------------------------------
 # Pipeline observability

@@ -77,7 +77,7 @@ class MacroProducer:
             FROM SNOWFLAKE_PUBLIC_DATA_FREE.PUBLIC_DATA_FREE.FINANCIAL_ECONOMIC_INDICATORS_TIMESERIES
             WHERE VARIABLE = 'EFFR_PCT'
               AND GEO_ID   = 'country/USA'
-              AND DATE >= DATEADD(YEAR, -2, CURRENT_DATE())
+              -- full history (was: AND DATE >= DATEADD(YEAR, -2, CURRENT_DATE()))
             ORDER BY DATE
         """)
         indicators = []
@@ -101,7 +101,7 @@ class MacroProducer:
             FROM SNOWFLAKE_PUBLIC_DATA_FREE.PUBLIC_DATA_FREE.BUREAU_OF_LABOR_STATISTICS_PRICE_TIMESERIES
             WHERE VARIABLE = 'CPI:_All_items,_Seasonally_adjusted,_Monthly'
               AND GEO_ID   = 'country/USA'
-              AND DATE >= DATEADD(YEAR, -2, CURRENT_DATE())
+              -- full history (was: AND DATE >= DATEADD(YEAR, -2, CURRENT_DATE()))
             ORDER BY DATE
         """)
         indicators = []
@@ -129,7 +129,7 @@ class MacroProducer:
             FROM SNOWFLAKE_PUBLIC_DATA_PAID.PUBLIC_DATA.FEDERAL_RESERVE_TIMESERIES_PIT
             WHERE VARIABLE = 'Z1_FL073161113.Q'
               AND _EFFECTIVE_END_TIMESTAMP IS NULL
-              AND DATE >= DATEADD(YEAR, -2, CURRENT_DATE())
+              -- full history (was: AND DATE >= DATEADD(YEAR, -2, CURRENT_DATE()))
             ORDER BY DATE
         """)
         indicators = []
@@ -154,7 +154,7 @@ class MacroProducer:
             WHERE LOWER(SERIES_TITLE) LIKE '%unemployment rate%'
               AND LOWER(SERIES_TITLE) NOT LIKE '%not seasonally%'
               AND GEO_ID = 'country/USA'
-              AND DATE >= DATEADD(YEAR, -2, CURRENT_DATE())
+              -- full history (was: AND DATE >= DATEADD(YEAR, -2, CURRENT_DATE()))
             ORDER BY DATE
         """)
         indicators = []
@@ -218,43 +218,74 @@ class MacroProducer:
 
     def fetch_and_write_to_snowflake(self, conn) -> int:
         """
-        Fetch all macro indicators and MERGE into RAW_MACRO_INDICATORS.
+        Fetch all macro indicators and bulk-load into RAW_MACRO_INDICATORS
+        via a temporary stage table + single MERGE (fast path).
         Returns number of rows written.
         """
+        import time
+        import pandas as pd
+        from snowflake.connector.pandas_tools import write_pandas
+
         indicators = self.fetch_all(conn)
         if not indicators:
             logger.warning('No macro indicators collected')
             return 0
 
+        total = len(indicators)
+        df = pd.DataFrame([{
+            'VARIABLE': ind.variable,
+            'GEO_ID':   ind.geo_id,
+            'DATE':     ind.date,
+            'VALUE':    ind.value,
+            'SOURCE':   ind.source,
+            'QUERY_ID': ind.query_id,
+        } for ind in indicators])
+
+        stage_table = f'TMP_MACRO_STAGE_{uuid.uuid4().hex[:8]}'.upper()
         cursor = conn.cursor()
-        merge_sql = """
-            MERGE INTO SCORPION_DB.MARKETLENS.RAW_MACRO_INDICATORS AS tgt
-            USING (
-                SELECT
-                    %(variable)s  AS VARIABLE,
-                    %(geo_id)s    AS GEO_ID,
-                    %(date)s      AS DATE,
-                    %(value)s     AS VALUE,
-                    %(source)s    AS SOURCE,
-                    %(query_id)s  AS QUERY_ID
-            ) AS src ON (tgt.VARIABLE = src.VARIABLE
-                     AND tgt.GEO_ID   = src.GEO_ID
-                     AND tgt.DATE     = src.DATE)
-            WHEN MATCHED THEN UPDATE SET
-                VALUE       = src.VALUE,
-                SOURCE      = src.SOURCE,
-                QUERY_ID    = src.QUERY_ID,
-                INGESTED_AT = CURRENT_TIMESTAMP()
-            WHEN NOT MATCHED THEN INSERT
-                (VARIABLE, GEO_ID, DATE, VALUE, SOURCE, QUERY_ID)
-            VALUES
-                (src.VARIABLE, src.GEO_ID, src.DATE,
-                 src.VALUE, src.SOURCE, src.QUERY_ID)
-        """
+        t0 = time.time()
         try:
-            for ind in indicators:
-                cursor.execute(merge_sql, ind.to_dict())
-            logger.info('Merged %d rows into RAW_MACRO_INDICATORS', len(indicators))
-            return len(indicators)
+            logger.info('MACRO: creating temp stage table %s', stage_table)
+            cursor.execute(f"""
+                CREATE OR REPLACE TEMPORARY TABLE SCORPION_DB.MARKETLENS.{stage_table} (
+                    VARIABLE  VARCHAR(100),
+                    GEO_ID    VARCHAR(100),
+                    DATE      DATE,
+                    VALUE     FLOAT,
+                    SOURCE    VARCHAR(50),
+                    QUERY_ID  VARCHAR(36)
+                )
+            """)
+
+            logger.info('MACRO: bulk-loading %d rows via write_pandas', total)
+            success, nchunks, nrows, _ = write_pandas(
+                conn, df, stage_table,
+                database='SCORPION_DB', schema='MARKETLENS',
+                quote_identifiers=False,
+            )
+            logger.info('MACRO: write_pandas loaded %d rows in %d chunks (%.1fs)',
+                        nrows, nchunks, time.time() - t0)
+
+            t1 = time.time()
+            cursor.execute(f"""
+                MERGE INTO SCORPION_DB.MARKETLENS.RAW_MACRO_INDICATORS AS tgt
+                USING SCORPION_DB.MARKETLENS.{stage_table} AS src
+                  ON (tgt.VARIABLE = src.VARIABLE
+                  AND tgt.GEO_ID   = src.GEO_ID
+                  AND tgt.DATE     = src.DATE)
+                WHEN MATCHED THEN UPDATE SET
+                    VALUE       = src.VALUE,
+                    SOURCE      = src.SOURCE,
+                    QUERY_ID    = src.QUERY_ID,
+                    INGESTED_AT = CURRENT_TIMESTAMP()
+                WHEN NOT MATCHED THEN INSERT
+                    (VARIABLE, GEO_ID, DATE, VALUE, SOURCE, QUERY_ID)
+                VALUES
+                    (src.VARIABLE, src.GEO_ID, src.DATE,
+                     src.VALUE, src.SOURCE, src.QUERY_ID)
+            """)
+            logger.info('MACRO: MERGE completed in %.1fs (total %.1fs for %d rows)',
+                        time.time() - t1, time.time() - t0, total)
+            return total
         finally:
             cursor.close()

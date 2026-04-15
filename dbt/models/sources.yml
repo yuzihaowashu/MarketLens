@@ -1,0 +1,79 @@
+version: 2
+
+sources:
+  # ---------------------------------------------------------------------------
+  # Snowflake Marketplace — free data
+  # ---------------------------------------------------------------------------
+  - name: snowflake_public_data_free
+    description: "Snowflake Marketplace free zero-copy data share."
+    database: SNOWFLAKE_PUBLIC_DATA_FREE
+    schema: PUBLIC_DATA_FREE
+    tables:
+      - name: STOCK_PRICE_TIMESERIES
+        description: "OHLCV timeseries for US equities."
+        columns:
+          - name: TICKER
+          - name: DATE
+          - name: VARIABLE
+          - name: VALUE
+      - name: FINANCIAL_ECONOMIC_INDICATORS_TIMESERIES
+        description: "Daily financial / macro indicators (Fed funds rate etc.)."
+      - name: BUREAU_OF_LABOR_STATISTICS_PRICE_TIMESERIES
+        description: "BLS monthly price series (CPI)."
+      - name: SEC_CORPORATE_REPORT_TEXT_ATTRIBUTES
+        description: "SEC filing text attributes (10-K/10-Q/8-K narrative fields)."
+
+  # ---------------------------------------------------------------------------
+  # Snowflake Marketplace — paid data (optional subscription)
+  # ---------------------------------------------------------------------------
+  - name: snowflake_public_data_paid
+    description: "Snowflake Marketplace paid data share. Models that depend on this are skipped automatically if the subscription is absent."
+    database: SNOWFLAKE_PUBLIC_DATA_PAID
+    schema: PUBLIC_DATA
+    tables:
+      - name: FEDERAL_RESERVE_TIMESERIES_PIT
+        description: "Federal Reserve Z.1 point-in-time timeseries."
+      - name: BUREAU_OF_LABOR_STATISTICS_EMPLOYMENT_TIMESERIES
+        description: "BLS monthly employment / unemployment series."
+
+  # ---------------------------------------------------------------------------
+  # Internal tables owned by the ingestion layer (ingestion/*.py)
+  # dbt only reads these — writes are owned by the producers.
+  # ---------------------------------------------------------------------------
+  - name: marketlens
+    description: "Raw + dimension tables written by MarketLens producers."
+    database: SCORPION_DB
+    schema: MARKETLENS
+    tables:
+      - name: RAW_STOCK_PRICES
+        description: "OHLCV rows written by YFinanceProducer."
+        loaded_at_field: INGESTED_AT
+        freshness:
+          warn_after:  {count: 48, period: hour}
+          error_after: {count: 7,  period: day}
+        columns:
+          - name: TICKER
+            tests: [not_null]
+          - name: DATE
+            tests: [not_null]
+          - name: CLOSE_PRICE
+          - name: SOURCE
+            tests: [not_null]
+      - name: RAW_MACRO_INDICATORS
+        description: "Macro indicator rows written by MacroProducer."
+        loaded_at_field: INGESTED_AT
+        freshness:
+          warn_after:  {count: 7,  period: day}
+          error_after: {count: 30, period: day}
+      - name: RAW_FRED_INDICATORS
+        description: "FRED API series written by FredProducer."
+        loaded_at_field: INGESTED_AT
+      - name: SEC_FILING_SUMMARIES
+        description: "Cortex-summarized SEC filings written by SECProducer."
+      - name: DIM_TICKER_SECTOR
+        description: "Static sector mapping for watchlist tickers (seeded by migrations/04)."
+        columns:
+          - name: TICKER
+            tests: [not_null, unique]
+          - name: SECTOR
+            tests: [not_null]

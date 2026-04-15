@@ -1,0 +1,50 @@
+USE SCHEMA SCORPION_DB.MARKETLENS;
+
+-- 14-day RSI. Uses simple moving average of gains/losses (SMA RSI) rather than
+-- Wilder's exponential smoothing — close enough for signal-generation purposes
+-- and avoids a recursive CTE.
+CREATE OR REPLACE VIEW V_RSI_14 AS
+WITH changes AS (
+    SELECT
+        TICKER,
+        DATE,
+        CLOSE_PRICE,
+        CLOSE_PRICE - LAG(CLOSE_PRICE) OVER (PARTITION BY TICKER ORDER BY DATE) AS DELTA
+    FROM V_STOCK_PRICES
+),
+gains_losses AS (
+    SELECT
+        TICKER,
+        DATE,
+        CLOSE_PRICE,
+        CASE WHEN DELTA > 0 THEN DELTA ELSE 0 END AS GAIN,
+        CASE WHEN DELTA < 0 THEN -DELTA ELSE 0 END AS LOSS
+    FROM changes
+),
+avg_gl AS (
+    SELECT
+        TICKER,
+        DATE,
+        CLOSE_PRICE,
+        AVG(GAIN) OVER (PARTITION BY TICKER ORDER BY DATE ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS AVG_GAIN_14,
+        AVG(LOSS) OVER (PARTITION BY TICKER ORDER BY DATE ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS AVG_LOSS_14,
+        COUNT(*) OVER (PARTITION BY TICKER ORDER BY DATE ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS WIN_N
+    FROM gains_losses
+)
+SELECT
+    TICKER,
+    DATE,
+    CLOSE_PRICE,
+    CASE
+        WHEN WIN_N < 14 THEN NULL
+        WHEN AVG_LOSS_14 = 0 THEN 100
+        ELSE 100 - (100 / (1 + (AVG_GAIN_14 / AVG_LOSS_14)))
+    END AS RSI_14,
+    CASE
+        WHEN WIN_N < 14 THEN 'NEUTRAL'
+        WHEN AVG_LOSS_14 = 0 THEN 'OVERBOUGHT'
+        WHEN (100 - (100 / (1 + (AVG_GAIN_14 / NULLIF(AVG_LOSS_14, 0))))) > 70 THEN 'OVERBOUGHT'
+        WHEN (100 - (100 / (1 + (AVG_GAIN_14 / NULLIF(AVG_LOSS_14, 0))))) < 30 THEN 'OVERSOLD'
+        ELSE 'NEUTRAL'
+    END AS RSI_STATE
+FROM avg_gl;

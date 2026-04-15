@@ -24,6 +24,7 @@ import uuid
 from datetime import date, datetime, timedelta
 
 from airflow import DAG
+from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
 # ---------------------------------------------------------------------------
@@ -150,51 +151,127 @@ def _ingest_macro(**ctx):
         raise
 
 
-def _refresh_signals(**ctx):
+def _ingest_fred(**ctx):
     """
-    Task 2: Re-execute the signal SQL view chain.
-
-    The views are defined against the base views in setup.sql which read
-    from the free marketplace.  This task ensures any new rows in
-    RAW_STOCK_PRICES are visible to downstream queries by running a
-    lightweight SELECT that materialises the view plan.
-
-    NOTE: Snowflake views are not materialized; this task queries each
-    view to force a plan refresh and validate that no view is broken.
-    A SnowflakeOperator could also be used here with the provider package.
+    Task 1c: Fetch macro series from the FRED API → MERGE into RAW_FRED_INDICATORS.
+    Runs in parallel with _ingest_prices and _ingest_macro.
+    If FRED_API_KEY is empty, the producer returns 0 and the task succeeds.
     """
+    import config as cfg
     from snowflake_client import get_connection
+    from ingestion.fred_producer import FredProducer
 
     run_id     = ctx['run_id']
     started_at = datetime.utcnow()
-    _log_run(run_id, 'refresh_signals', 'started', started_at=started_at)
+    _log_run(run_id, 'ingest_fred', 'started', started_at=started_at)
 
-    views = [
-        'V_STOCK_PRICES',
-        'V_DAILY_RETURNS',
-        'V_ROLLING_VOLATILITY',
-        'V_ANOMALY_SCORES',
-        'V_FED_RATE_CHANGES',
-        'V_CPI_CHANGES',
-        'V_SIGNAL_SUMMARY',
-    ]
     try:
-        conn   = get_connection()
-        cursor = conn.cursor()
-        for view in views:
-            cursor.execute(
-                f'SELECT COUNT(*) FROM SCORPION_DB.MARKETLENS.{view}'
-            )
-            count = cursor.fetchone()[0]
-            logger.info('View %s has %d rows', view, count)
-        cursor.close()
-        _log_run(run_id, 'refresh_signals', 'completed',
-                 started_at=started_at, completed_at=datetime.utcnow())
+        conn = get_connection()
+        n    = FredProducer(cfg.FRED_API_KEY).fetch_and_write_to_snowflake(conn)
+        logger.info('ingest_fred: wrote %d rows', n)
+        _log_run(run_id, 'ingest_fred', 'completed',
+                 row_count=n, started_at=started_at, completed_at=datetime.utcnow())
+        return n
     except Exception as exc:
-        _log_run(run_id, 'refresh_signals', 'failed',
+        _log_run(run_id, 'ingest_fred', 'failed',
                  error_msg=str(exc)[:500],
                  started_at=started_at, completed_at=datetime.utcnow())
         raise
+
+
+def _ingest_sec_metadata(**ctx):
+    """Task 1d: Discover recent SEC filings → MERGE into RAW_SEC_FILINGS."""
+    import config as cfg
+    from snowflake_client import get_connection
+    from ingestion.sec_producer import SECProducer
+
+    run_id     = ctx['run_id']
+    started_at = datetime.utcnow()
+    _log_run(run_id, 'ingest_sec_metadata', 'started', started_at=started_at)
+
+    try:
+        if not cfg.SEC_USER_AGENT:
+            logger.warning('SEC_USER_AGENT not set — skipping SEC ingestion')
+            _log_run(run_id, 'ingest_sec_metadata', 'completed',
+                     row_count=0, started_at=started_at,
+                     completed_at=datetime.utcnow())
+            return 0
+        conn = get_connection()
+        n = SECProducer().fetch_filing_metadata(cfg.WATCHLIST_TICKERS, conn)
+        logger.info('ingest_sec_metadata: wrote %d rows', n)
+        _log_run(run_id, 'ingest_sec_metadata', 'completed',
+                 row_count=n, started_at=started_at, completed_at=datetime.utcnow())
+        return n
+    except Exception as exc:
+        _log_run(run_id, 'ingest_sec_metadata', 'failed',
+                 error_msg=str(exc)[:500],
+                 started_at=started_at, completed_at=datetime.utcnow())
+        raise
+
+
+def _ingest_sec_text(**ctx):
+    """Task 1e: Fetch primary-doc HTML for new filings → RAW_SEC_FILING_TEXT."""
+    import config as cfg
+    from snowflake_client import get_connection
+    from ingestion.sec_producer import SECProducer
+
+    run_id     = ctx['run_id']
+    started_at = datetime.utcnow()
+    _log_run(run_id, 'ingest_sec_text', 'started', started_at=started_at)
+
+    try:
+        if not cfg.SEC_USER_AGENT:
+            _log_run(run_id, 'ingest_sec_text', 'completed',
+                     row_count=0, started_at=started_at,
+                     completed_at=datetime.utcnow())
+            return 0
+        conn = get_connection()
+        n = SECProducer().fetch_filing_text(conn)
+        logger.info('ingest_sec_text: wrote %d chunks', n)
+        _log_run(run_id, 'ingest_sec_text', 'completed',
+                 row_count=n, started_at=started_at, completed_at=datetime.utcnow())
+        return n
+    except Exception as exc:
+        _log_run(run_id, 'ingest_sec_text', 'failed',
+                 error_msg=str(exc)[:500],
+                 started_at=started_at, completed_at=datetime.utcnow())
+        raise
+
+
+def _summarize_sec_filings(**ctx):
+    """Task 1f: Cortex-summarize filings with text → SEC_FILING_SUMMARIES."""
+    from snowflake_client import get_connection
+    from ingestion.sec_producer import SECProducer
+
+    run_id     = ctx['run_id']
+    started_at = datetime.utcnow()
+    _log_run(run_id, 'summarize_sec_filings', 'started', started_at=started_at)
+
+    try:
+        conn = get_connection()
+        n = SECProducer().summarize_filings(conn)
+        logger.info('summarize_sec_filings: wrote %d rows', n)
+        _log_run(run_id, 'summarize_sec_filings', 'completed',
+                 row_count=n, started_at=started_at, completed_at=datetime.utcnow())
+        return n
+    except Exception as exc:
+        _log_run(run_id, 'summarize_sec_filings', 'failed',
+                 error_msg=str(exc)[:500],
+                 started_at=started_at, completed_at=datetime.utcnow())
+        raise
+
+
+def _log_dbt_build_start(**ctx):
+    """Record dbt build kickoff in PIPELINE_RUN_LOG so the dashboard sees it."""
+    _log_run(ctx['run_id'], 'refresh_signals', 'started',
+             started_at=datetime.utcnow())
+
+
+def _log_dbt_build_end(**ctx):
+    """Record dbt build completion. Runs only if the BashOperator succeeded."""
+    _log_run(ctx['run_id'], 'refresh_signals', 'completed',
+             started_at=datetime.utcnow(),
+             completed_at=datetime.utcnow())
 
 
 def _anomaly_check(**ctx):
@@ -299,9 +376,69 @@ with DAG(
         python_callable=_ingest_macro,
     )
 
-    refresh_signals = PythonOperator(
+    ingest_fred = PythonOperator(
+        task_id='ingest_fred',
+        python_callable=_ingest_fred,
+    )
+
+    ingest_sec_metadata = PythonOperator(
+        task_id='ingest_sec_metadata',
+        python_callable=_ingest_sec_metadata,
+        retries=2,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    ingest_sec_text = PythonOperator(
+        task_id='ingest_sec_text',
+        python_callable=_ingest_sec_text,
+        retries=2,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    summarize_sec_filings = PythonOperator(
+        task_id='summarize_sec_filings',
+        python_callable=_summarize_sec_filings,
+        retries=2,
+        retry_delay=timedelta(minutes=5),
+    )
+
+    # Signal refresh is now a `dbt build` invocation. dbt builds every model
+    # listed in dbt/models/ and runs all configured tests — any test failure
+    # aborts the DAG so anomaly_check never queries a stale/broken view.
+    log_dbt_start = PythonOperator(
+        task_id='log_dbt_start',
+        python_callable=_log_dbt_build_start,
+    )
+
+    refresh_signals = BashOperator(
         task_id='refresh_signals',
-        python_callable=_refresh_signals,
+        bash_command=(
+            'cd "$MARKETLENS_ROOT/dbt" && '
+            'dbt deps --profiles-dir . && '
+            'if [ "$SNOWFLAKE_PAID_DATA_AVAILABLE" = "true" ]; then '
+            '  dbt build --profiles-dir . --select +signal_summary+; '
+            'else '
+            '  dbt build --profiles-dir . --select +signal_summary+ '
+            '    --exclude stg_10y_treasury+ stg_unemployment+; '
+            'fi'
+        ),
+        env={
+            'MARKETLENS_ROOT': _ROOT_DIR,
+            'SNOWFLAKE_PAID_DATA_AVAILABLE': os.environ.get('SNOWFLAKE_PAID_DATA_AVAILABLE', ''),
+            'SNOWFLAKE_PRIVATE_KEY_PATH':    os.environ.get('SNOWFLAKE_PRIVATE_KEY_PATH', ''),
+            'SNOWFLAKE_ACCOUNT':             os.environ.get('SNOWFLAKE_ACCOUNT', ''),
+            'SNOWFLAKE_USER':                os.environ.get('SNOWFLAKE_USER', ''),
+            'SNOWFLAKE_ROLE':                os.environ.get('SNOWFLAKE_ROLE', ''),
+            'SNOWFLAKE_DATABASE':            os.environ.get('SNOWFLAKE_DATABASE', ''),
+            'SNOWFLAKE_WAREHOUSE':           os.environ.get('SNOWFLAKE_WAREHOUSE', ''),
+            'SNOWFLAKE_SCHEMA':              os.environ.get('SNOWFLAKE_SCHEMA', ''),
+        },
+        append_env=True,
+    )
+
+    log_dbt_end = PythonOperator(
+        task_id='log_dbt_end',
+        python_callable=_log_dbt_build_end,
     )
 
     anomaly_check = PythonOperator(
@@ -314,6 +451,9 @@ with DAG(
         python_callable=_notify,
     )
 
-    # ingest_prices and ingest_macro run in parallel, then signal refresh,
-    # then anomaly check, then notifications
-    [ingest_prices, ingest_macro] >> refresh_signals >> anomaly_check >> notify
+    # ingest_prices and ingest_macro run in parallel, then dbt refresh
+    # (wrapped with PIPELINE_RUN_LOG markers), then anomaly check, then notify.
+    ingest_sec_metadata >> ingest_sec_text >> summarize_sec_filings
+    [ingest_prices, ingest_macro, ingest_fred, summarize_sec_filings] \
+        >> log_dbt_start >> refresh_signals >> log_dbt_end \
+        >> anomaly_check >> notify
