@@ -86,6 +86,18 @@ chmod +x start.sh
 
 ### Step 3 — Configure environment variables
 
+> **Heads-up for forks:** `config.py` ships with machine-specific defaults for
+> `SNOWFLAKE_USER` (`GRIZZLY`) and `SNOWFLAKE_PRIVATE_KEY_PATH`
+> (`/Users/andrewhaggstrom/Desktop/CS Projects/Keys/rsa_key.p8`) — these are
+> the maintainer's local values. **Do not edit `config.py`.** Override both in
+> your shell or `.env`:
+> ```bash
+> export SNOWFLAKE_USER="YOUR_SF_USER"
+> export SNOWFLAKE_PRIVATE_KEY_PATH="/absolute/path/to/your/rsa_key.p8"
+> ```
+
+---
+
 Copy the template and fill in your values:
 
 ```bash

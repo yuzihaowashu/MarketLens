@@ -23,6 +23,7 @@ def _env_strip(key: str, default: Optional[str] = None) -> Optional[str]:
 # ---------------------------------------------------------------------------
 SNOWFLAKE_ACCOUNT = _env_strip('SNOWFLAKE_ACCOUNT', 'SFEDU02-UNB02139') or 'SFEDU02-UNB02139'
 SNOWFLAKE_USER = _env_strip('SNOWFLAKE_USER', 'GRIZZLY') or 'GRIZZLY'
+# Will NEED TO CHANGE DEPENDING ON USER
 SNOWFLAKE_DATABASE = _env_strip('SNOWFLAKE_DATABASE', 'SCORPION_DB') or 'SCORPION_DB'
 SNOWFLAKE_SCHEMA = _env_strip('SNOWFLAKE_SCHEMA', 'MARKETLENS') or 'MARKETLENS'
 SNOWFLAKE_WAREHOUSE = _env_strip('SNOWFLAKE_WAREHOUSE', 'SCORPION_WH') or 'SCORPION_WH'
@@ -38,6 +39,7 @@ if _private_key_raw:
 else:
     SNOWFLAKE_PRIVATE_KEY_PATH = os.path.expanduser(
         '/Users/andrewhaggstrom/Desktop/CS Projects/Keys/rsa_key.p8'
+# Will need to change when running in your own set up
     )
 
 # ---------------------------------------------------------------------------
