@@ -215,7 +215,7 @@ One addition beyond `daily_stock_analysis`: a **circuit breaker** on each produc
 
 **Important context:** Spark and Flink are *not* needed for performance at our current data volume (9 tickers, daily OHLCV). Snowflake SQL handles the signal computation in milliseconds. The right reason to implement this phase is to *learn* the tools and demonstrate distributed stream processing in a real pipeline context.
 
-To use Flink meaningfully, a real-time data source is needed — Yahoo Finance has a 15-minute delay and doesn't stream. The best free option for learning is a **crypto exchange WebSocket** (Binance or Coinbase offer free, unlimited real-time feeds with no API key). The data format is identical in structure to stock prices, so a Flink job written for crypto works the same way for equities once a paid feed is available.
+To use Flink meaningfully, a real-time data source is needed — Yahoo Finance has a 15-minute delay and doesn't stream. Prefer **lawful, contract-compliant** market data (licensed vendor, course sandbox, etc.). For hands-on practice without touching third-party gray areas, **replay historical rows or synthetic ticks from your own files into Kafka** and run Flink on that stream — the streaming mechanics are the same as with a live vendor feed.
 
 #### Option A — Apache Spark Structured Streaming
 

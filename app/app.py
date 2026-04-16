@@ -415,6 +415,158 @@ def get_anomaly_data(ticker, days):
     return pd.DataFrame(rows, columns=cols)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_latest_watchlist_daily_returns_pct():
+    """
+    Latest trading day: ticker -> daily return in **percent** units
+    (e.g. 0.42 means +0.42%), for ``reports.extra_metrics.watchlist_breadth_*``.
+    """
+    try:
+        _, rows = run_query(
+            """
+            SELECT TICKER, DAILY_RETURN * 100 AS ret_pct
+            FROM V_ANOMALY_SCORES
+            WHERE DATE = (SELECT MAX(DATE) FROM V_ANOMALY_SCORES)
+            """,
+        )
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        if r[0] and r[1] is not None:
+            try:
+                out[str(r[0]).upper()] = float(r[1])
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_latest_fred_variable_levels():
+    """Latest FRED observation per VARIABLE -> value, for ``fred_macro_spread_metrics``."""
+    try:
+        _, rows = run_query(
+            """
+            SELECT VARIABLE, VALUE
+            FROM RAW_FRED_INDICATORS
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY VARIABLE ORDER BY DATE DESC) = 1
+            """,
+        )
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        if r[0] is not None and r[1] is not None:
+            try:
+                out[str(r[0])] = float(r[1])
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_latest_volume_and_avg20d():
+    """
+    Per ticker: latest day volume and trailing ~20-row avg volume from
+    ``V_STOCK_PRICES`` for ``liquidity_proxy_from_volumes``.
+    Returns (ticker_to_volume, ticker_to_avg_volume_20d).
+    """
+    try:
+        _, rows = run_query(
+            """
+            WITH x AS (
+                SELECT
+                    TICKER,
+                    DATE,
+                    VOLUME,
+                    AVG(VOLUME) OVER (
+                        PARTITION BY TICKER
+                        ORDER BY DATE
+                        ROWS BETWEEN 19 PRECEDING AND CURRENT ROW
+                    ) AS avg20
+                FROM V_STOCK_PRICES
+                WHERE VOLUME IS NOT NULL
+            )
+            SELECT TICKER, VOLUME, avg20
+            FROM x
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY TICKER ORDER BY DATE DESC) = 1
+            """,
+        )
+    except Exception:
+        return {}, {}
+    vol_map, avg_map = {}, {}
+    for r in rows:
+        if not r[0] or r[1] is None or r[2] is None:
+            continue
+        try:
+            t = str(r[0]).upper()
+            vol_map[t] = float(r[1])
+            avg_map[t] = float(r[2])
+        except (TypeError, ValueError):
+            continue
+    return vol_map, avg_map
+
+
+def _render_extension_metrics_panel():
+    """
+    Run ``reports.extra_metrics`` on Snowflake-backed snapshots. Renders only
+    when at least one function returns MetricRows (teammate implements there).
+    """
+    try:
+        from reports.extra_metrics import (
+            fred_macro_spread_metrics,
+            liquidity_proxy_from_volumes,
+            watchlist_breadth_from_daily_returns,
+        )
+    except ImportError:
+        return
+
+    blocks = []
+    try:
+        dret = get_latest_watchlist_daily_returns_pct()
+        if dret:
+            blocks.extend(watchlist_breadth_from_daily_returns(dret))
+    except Exception:
+        logger.exception('extension metrics: watchlist breadth')
+
+    try:
+        fred = get_latest_fred_variable_levels()
+        if fred:
+            blocks.extend(fred_macro_spread_metrics(fred))
+    except Exception:
+        logger.exception('extension metrics: FRED macro spread')
+
+    try:
+        vol_map, avg_map = get_latest_volume_and_avg20d()
+        if vol_map and avg_map:
+            blocks.extend(liquidity_proxy_from_volumes(vol_map, avg_map))
+    except Exception:
+        logger.exception('extension metrics: liquidity proxy')
+
+    if not blocks:
+        return
+
+    st.markdown('---')
+    st.markdown('#### 📎 Extension metrics')
+    st.caption(
+        'Values from `reports/extra_metrics.py` — shown when that module '
+        'returns rows; teammates implement logic there without editing this page.'
+    )
+    n = len(blocks)
+    cols = st.columns(min(n, 4))
+    for i, row in enumerate(blocks):
+        with cols[i % len(cols)]:
+            v = row.value
+            if v is None:
+                disp = '—'
+            elif isinstance(v, float):
+                disp = f'{v:.4g}' if (abs(v) > 1e5 or (abs(v) < 1e-3 and v != 0)) else f'{v:.2f}'
+            else:
+                disp = str(v)
+            st.metric(row.label, disp)
+            st.caption(row.interpretation)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_fed_rate_data(days=365):
     cols, rows = run_query(
@@ -1402,6 +1554,7 @@ if st.session_state.page == 'stock_deep_dive':
         'exposed as the Snowflake view `V_ANOMALY_SCORES` queried by this page.',
     )
     _render_stats_ribbon()
+    _render_extension_metrics_panel()
 
     dd_ticker = st.selectbox(
         'Select Ticker',
