@@ -136,7 +136,7 @@ models:
       - name: IS_INVERTED
 
   - name: yield_curve_signals
-    description: "Dates where inversion status flipped. Materializes as V_YIELD_CURVE_SIGNALS."
+    description: "Dates where inversion status flipped. Feeds V_SIGNAL_SUMMARY. Materializes as V_YIELD_CURVE_SIGNALS."
     columns:
       - name: DATE
         tests: [not_null]
@@ -144,6 +144,24 @@ models:
         tests:
           - accepted_values:
               values: [INVERSION_START, INVERSION_END]
+
+  - name: gdp_changes
+    description: "Quarter-over-quarter Real GDP growth with contraction flag. Materializes as V_GDP_CHANGES."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: GDP_REAL_BILLIONS
+      - name: QOQ_GROWTH_PCT
+      - name: IS_CONTRACTION
+
+  - name: sentiment_changes
+    description: "Month-over-month UMich Consumer Sentiment change. Flags sharp moves. Materializes as V_SENTIMENT_CHANGES."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: SENTIMENT_INDEX
+      - name: MOM_CHANGE
+      - name: SENTIMENT_EVENT
 
   # ---------------------------------------------------------------------------
   # SEC
@@ -173,7 +191,7 @@ models:
       - name: DATE
         description: "Date the signal fired on."
       - name: SIGNAL_TYPE
-        description: "Category. One of: STOCK_ANOMALY, FED_RATE_CHANGE, CPI_CHANGE, SEC_FILING, RSI_EXTREME, MA_CROSSOVER, DRAWDOWN, SECTOR_ROTATION."
+        description: "Category. One of: STOCK_ANOMALY, FED_RATE_CHANGE, CPI_CHANGE, SEC_FILING, RSI_EXTREME, MA_CROSSOVER, DRAWDOWN, SECTOR_ROTATION, YIELD_CURVE, GDP_CONTRACTION, SENTIMENT_SHIFT."
         tests:
           - not_null
           - accepted_values:
@@ -186,6 +204,9 @@ models:
                 - MA_CROSSOVER
                 - DRAWDOWN
                 - SECTOR_ROTATION
+                - YIELD_CURVE
+                - GDP_CONTRACTION
+                - SENTIMENT_SHIFT
       - name: ENTITY
         description: "Subject of the signal (ticker, macro indicator name, sector)."
         tests: [not_null]

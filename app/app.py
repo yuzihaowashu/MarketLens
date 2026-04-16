@@ -131,7 +131,7 @@ html, body { font-family: 'Inter', sans-serif; }
 for _key, _default in [
     ('level', None), ('messages', []),
     ('pending_q', None), ('_transitioning', False),
-    ('page', 'chat'),
+    ('page', 'chat'), ('admin_mode', False),
 ]:
     if _key not in st.session_state:
         st.session_state[_key] = _default
@@ -297,6 +297,104 @@ def get_signal_details(signal_type, entity, signal_date):
                 'Previous CPI': f"{r[2]:.2f}" if r[2] else "N/A",
                 'MoM Change': f"{r[3] * 100:.3f}%",
             }
+    elif signal_type == 'RSI_EXTREME':
+        cols, rows = run_query(
+            "SELECT TICKER, DATE, RSI_14, RSI_STATE "
+            "FROM V_RSI_14 WHERE TICKER = %s AND DATE = %s",
+            (entity, signal_date),
+        )
+        if rows:
+            r = rows[0]
+            return {
+                'Ticker': r[0], 'Date': str(r[1]),
+                'RSI(14)': f"{r[2]:.1f}",
+                'State': r[3],
+            }
+    elif signal_type == 'MA_CROSSOVER':
+        cols, rows = run_query(
+            "SELECT TICKER, DATE, SMA_50, SMA_200, CROSSOVER_EVENT "
+            "FROM V_MA_CROSSOVER WHERE TICKER = %s AND DATE = %s",
+            (entity, signal_date),
+        )
+        if rows:
+            r = rows[0]
+            return {
+                'Ticker': r[0], 'Date': str(r[1]),
+                'SMA 50': f"${r[2]:.2f}",
+                'SMA 200': f"${r[3]:.2f}",
+                'Event': r[4],
+            }
+    elif signal_type == 'DRAWDOWN':
+        cols, rows = run_query(
+            "SELECT TICKER, DATE, CLOSE_PRICE, HIGH_52W, DRAWDOWN_PCT, DRAWDOWN_STATE "
+            "FROM V_DRAWDOWN WHERE TICKER = %s AND DATE = %s",
+            (entity, signal_date),
+        )
+        if rows:
+            r = rows[0]
+            return {
+                'Ticker': r[0], 'Date': str(r[1]),
+                'Close': f"${r[2]:.2f}",
+                '52W High': f"${r[3]:.2f}",
+                'Drawdown': f"{r[4] * 100:.1f}%",
+                'State': r[5],
+            }
+    elif signal_type == 'SECTOR_ROTATION':
+        cols, rows = run_query(
+            "SELECT DATE, SECTOR, AVG_20D_RETURN, SECTOR_RANK "
+            "FROM V_SECTOR_ROTATION WHERE SECTOR = %s AND DATE = %s",
+            (entity, signal_date),
+        )
+        if rows:
+            r = rows[0]
+            return {
+                'Date': str(r[0]),
+                'Sector': r[1],
+                '20D Avg Return': f"{r[2] * 100:.2f}%",
+                'Rank': str(r[3]),
+            }
+    elif signal_type == 'YIELD_CURVE':
+        cols, rows = run_query(
+            "SELECT DATE, TREASURY_10Y, FED_FUNDS_RATE, CURVE_SPREAD, IS_INVERTED "
+            "FROM V_YIELD_CURVE WHERE DATE = %s",
+            (signal_date,),
+        )
+        if rows:
+            r = rows[0]
+            return {
+                'Date': str(r[0]),
+                '10Y Treasury': f"{r[1] * 100:.2f}%",
+                'Fed Funds Rate': f"{r[2] * 100:.2f}%",
+                'Spread': f"{r[3] * 100:.2f}%",
+                'Inverted': str(r[4]),
+            }
+    elif signal_type == 'GDP_CONTRACTION':
+        cols, rows = run_query(
+            "SELECT DATE, GDP_REAL_BILLIONS, QOQ_GROWTH_PCT "
+            "FROM V_GDP_CHANGES WHERE DATE = %s",
+            (signal_date,),
+        )
+        if rows:
+            r = rows[0]
+            return {
+                'Date': str(r[0]),
+                'Real GDP': f"${r[1]:,.0f}B",
+                'QoQ Growth': f"{r[2]:+.2f}%",
+            }
+    elif signal_type == 'SENTIMENT_SHIFT':
+        cols, rows = run_query(
+            "SELECT DATE, SENTIMENT_INDEX, MOM_CHANGE, SENTIMENT_EVENT "
+            "FROM V_SENTIMENT_CHANGES WHERE DATE = %s",
+            (signal_date,),
+        )
+        if rows:
+            r = rows[0]
+            return {
+                'Date': str(r[0]),
+                'Sentiment Index': f"{r[1]:.1f}",
+                'MoM Change': f"{r[2]:+.1f} pts",
+                'Event': r[3],
+            }
     return None
 
 
@@ -351,6 +449,90 @@ def get_yield_curve_data():
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_gdp_data():
+    try:
+        cols, rows = run_query(
+            'SELECT DATE, GDP_REAL_BILLIONS, QOQ_GROWTH_PCT, IS_CONTRACTION '
+            'FROM V_GDP_CHANGES WHERE GDP_REAL_BILLIONS IS NOT NULL '
+            'ORDER BY DATE DESC LIMIT 40'
+        )
+        return pd.DataFrame(rows, columns=cols)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_housing_data():
+    try:
+        cols, rows = run_query(
+            'SELECT DATE, HOUSING_STARTS_K '
+            'FROM V_FRED_HOUSING WHERE HOUSING_STARTS_K IS NOT NULL '
+            'ORDER BY DATE DESC LIMIT 60'
+        )
+        return pd.DataFrame(rows, columns=cols)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_sentiment_data():
+    try:
+        cols, rows = run_query(
+            'SELECT DATE, SENTIMENT_INDEX, MOM_CHANGE, SENTIMENT_EVENT '
+            'FROM V_SENTIMENT_CHANGES WHERE SENTIMENT_INDEX IS NOT NULL '
+            'ORDER BY DATE DESC LIMIT 60'
+        )
+        return pd.DataFrame(rows, columns=cols)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_inflation_expectations_data():
+    try:
+        cols, rows = run_query(
+            'SELECT DATE, INFLATION_EXPECTATION_PCT '
+            'FROM V_FRED_INFLATION_EXPECTATIONS WHERE INFLATION_EXPECTATION_PCT IS NOT NULL '
+            'ORDER BY DATE DESC LIMIT 250'
+        )
+        return pd.DataFrame(rows, columns=cols)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def get_kafka_consumer_lag() -> dict:
+    """Return {group: lag_int_or_None} for all four streaming consumer groups."""
+    try:
+        from kafka import KafkaConsumer
+        from kafka.admin import KafkaAdminClient
+        admin  = KafkaAdminClient(bootstrap_servers=cfg.KAFKA_BOOTSTRAP,
+                                  client_id='marketlens-health',
+                                  request_timeout_ms=3000)
+        helper = KafkaConsumer(bootstrap_servers=cfg.KAFKA_BOOTSTRAP,
+                               request_timeout_ms=3000)
+        groups = ['sf-writer', 'anomaly-check', 'notifier', 'dashboard']
+        result = {}
+        for group in groups:
+            try:
+                offsets = admin.list_consumer_group_offsets(group)
+                if not offsets:
+                    result[group] = None
+                    continue
+                end_offsets = helper.end_offsets(list(offsets.keys()))
+                lag = sum(max(0, end_offsets.get(tp, meta.offset) - meta.offset)
+                          for tp, meta in offsets.items())
+                result[group] = lag
+            except Exception:
+                result[group] = None
+        admin.close()
+        helper.close()
+        return result
+    except Exception:
+        return {}
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_pipeline_runs(limit=30):
     try:
@@ -365,6 +547,179 @@ def get_pipeline_runs(limit=30):
         return pd.DataFrame(rows, columns=cols), None
     except Exception as _e:
         return pd.DataFrame(), str(_e)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_signal_stats():
+    """Total signal count for the stats ribbon."""
+    try:
+        _, r = run_query(
+            'SELECT COUNT(*), COUNT(DISTINCT SIGNAL_TYPE), COUNT(DISTINCT ENTITY) '
+            'FROM V_SIGNAL_SUMMARY'
+        )
+        if r:
+            return {'total': int(r[0][0]), 'types': int(r[0][1]), 'entities': int(r[0][2])}
+    except Exception:
+        pass
+    return {'total': 0, 'types': 0, 'entities': 0}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_signal_heatmap_data():
+    """Counts of ticker-level signals by type — used to draw the signal heatmap."""
+    try:
+        cols, rows = run_query(
+            "SELECT ENTITY, SIGNAL_TYPE, COUNT(*) AS CNT "
+            "FROM V_SIGNAL_SUMMARY "
+            "WHERE SIGNAL_TYPE IN ('STOCK_ANOMALY','RSI_EXTREME','MA_CROSSOVER','DRAWDOWN') "
+            "GROUP BY ENTITY, SIGNAL_TYPE"
+        )
+        return pd.DataFrame(rows, columns=cols)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_story_of_day():
+    """One plain-English paragraph summarising the market for Just Curious users."""
+    try:
+        sdf = get_top_signals(3)
+        if sdf.empty:
+            return None
+        signal_text = '\n'.join(
+            f"- {_format_signal_context_row(row)}" for _, row in sdf.iterrows()
+        )
+        prompt = (
+            "You are a friendly market storyteller writing for someone with zero finance "
+            "knowledge. Based on the signals below, write ONE engaging paragraph (3-4 sentences) "
+            "explaining what's happening in the market today. Use everyday analogies. "
+            "No jargon. Do NOT give investment advice.\n\n"
+            f"Signals:\n{signal_text}"
+        )
+        return run_query_single(
+            f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{LLM_MODEL}', %s)", (prompt,)
+        )
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_sec_tone_breakdown():
+    """Count of SEC filings by management tone — shown in sidebar."""
+    try:
+        cols, rows = run_query(
+            "SELECT COALESCE(UPPER(MANAGEMENT_TONE), 'UNKNOWN') AS TONE, "
+            "COUNT(*) AS CNT "
+            "FROM V_SEC_NARRATIVES GROUP BY TONE ORDER BY CNT DESC"
+        )
+        return pd.DataFrame(rows, columns=cols)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_ticker_signal_summary(ticker: str) -> dict:
+    """Latest RSI, MA crossover, and drawdown state for a ticker — used in Deep Dive header."""
+    result: dict = {}
+    try:
+        _, r = run_query(
+            "SELECT RSI_14, RSI_STATE FROM V_RSI_14 "
+            "WHERE TICKER = %s AND DATE IS NOT NULL ORDER BY DATE DESC LIMIT 1",
+            (ticker,),
+        )
+        if r:
+            result['rsi'] = r[0][0]
+            result['rsi_state'] = r[0][1]
+    except Exception:
+        pass
+    try:
+        _, r = run_query(
+            "SELECT CROSSOVER_EVENT, SMA_50, SMA_200 FROM V_MA_CROSSOVER "
+            "WHERE TICKER = %s AND DATE IS NOT NULL ORDER BY DATE DESC LIMIT 1",
+            (ticker,),
+        )
+        if r:
+            result['ma_event'] = r[0][0]
+            result['sma50'] = r[0][1]
+            result['sma200'] = r[0][2]
+    except Exception:
+        pass
+    try:
+        _, r = run_query(
+            "SELECT DRAWDOWN_PCT, DRAWDOWN_STATE FROM V_DRAWDOWN "
+            "WHERE TICKER = %s AND DATE IS NOT NULL ORDER BY DATE DESC LIMIT 1",
+            (ticker,),
+        )
+        if r:
+            result['drawdown_pct'] = r[0][0]
+            result['drawdown_state'] = r[0][1]
+    except Exception:
+        pass
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Admin-mode tech note helper
+# ─────────────────────────────────────────────────────────────────────
+def _tech_note(title: str, body: str):
+    """Render a tech-stack explainer banner when Admin Mode is on."""
+    if not st.session_state.get('admin_mode', False):
+        return
+    # Escape HTML, then highlight backtick spans as inline code
+    safe_body = html.escape(body)
+    safe_body = re.sub(
+        r'`([^`]+)`',
+        r'<code style="background:rgba(102,126,234,0.22);padding:0 4px;border-radius:3px;'
+        r'font-family:monospace;font-size:0.80rem;color:#a8c8ff;">\1</code>',
+        safe_body,
+    )
+    st.markdown(
+        f"""<div style="
+            background: linear-gradient(135deg,rgba(15,15,35,0.97),rgba(20,10,45,0.97));
+            border: 1.5px solid rgba(102,126,234,0.45);
+            border-left: 4px solid #667eea;
+            border-radius: 10px;
+            padding: 0.7rem 1.1rem;
+            margin: 0 0 1rem 0;
+            font-size: 0.82rem;
+            line-height: 1.65;
+            color: #c8d0f8;
+        ">
+        <span style="color:#8fa4ff;font-weight:700;letter-spacing:0.03em;">
+            ⚙ TECH STACK &mdash; {html.escape(title)}
+        </span><br>
+        {safe_body}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Stats ribbon renderer  (Analyst mode — top of every page)
+# ─────────────────────────────────────────────────────────────────────
+def _render_stats_ribbon():
+    stats = get_signal_stats()
+    items = [
+        ('🎯', str(len(WATCHLIST_TICKERS)), 'Tickers'),
+        ('📡', '10', 'Signal Types'),
+        ('🏦', '7', 'Macro Indicators'),
+        ('🔧', '13', 'dbt Models'),
+        ('🔔', f"{stats['total']:,}" if stats['total'] else '—', 'Signals Detected'),
+        ('⚡', 'Live', 'Kafka Stream'),
+    ]
+    _rcols = st.columns(len(items))
+    for _c, (_icon, _val, _lbl) in zip(_rcols, items):
+        _c.markdown(
+            f"""<div style="text-align:center;padding:0.55rem 0.2rem;
+                background:linear-gradient(135deg,rgba(102,126,234,0.10),rgba(118,75,162,0.10));
+                border-radius:10px;border:1px solid rgba(102,126,234,0.20);margin-bottom:0.1rem;">
+                <div style="font-size:1.3rem;line-height:1.2;">{_icon}</div>
+                <div style="font-size:1.05rem;font-weight:700;color:#667eea;">{_val}</div>
+                <div style="font-size:0.70rem;color:#444;margin-top:1px;">{_lbl}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    st.markdown('<div style="margin-bottom:0.6rem;"></div>', unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -454,6 +809,77 @@ def build_context(question):
         except Exception as e:
             logger.warning("Failed to fetch CPI: %s", e)
 
+    if any(kw in q for kw in ['gdp', 'growth', 'recession', 'economy', 'economic']):
+        try:
+            _, r = run_query(
+                "SELECT DATE, GDP_REAL_BILLIONS, QOQ_GROWTH_PCT, IS_CONTRACTION "
+                "FROM V_GDP_CHANGES WHERE GDP_REAL_BILLIONS IS NOT NULL "
+                "ORDER BY DATE DESC LIMIT 1"
+            )
+            if r:
+                parts.append(
+                    f"Latest Real GDP: ${r[0][1]:,.0f}B as of {r[0][0]}, "
+                    f"QoQ growth: {r[0][2]:+.2f}%"
+                    + (" (CONTRACTION)" if r[0][3] else "")
+                )
+        except Exception as e:
+            logger.warning("Failed to fetch GDP: %s", e)
+
+    if any(kw in q for kw in ['housing', 'real estate', 'construction', 'home']):
+        try:
+            _, r = run_query(
+                "SELECT DATE, HOUSING_STARTS_K FROM V_FRED_HOUSING "
+                "WHERE HOUSING_STARTS_K IS NOT NULL ORDER BY DATE DESC LIMIT 1"
+            )
+            if r:
+                parts.append(
+                    f"Latest Housing Starts: {r[0][1]:,.0f}K units (SAAR) as of {r[0][0]}"
+                )
+        except Exception as e:
+            logger.warning("Failed to fetch housing starts: %s", e)
+
+    if any(kw in q for kw in ['sentiment', 'consumer', 'confidence', 'umich']):
+        try:
+            _, r = run_query(
+                "SELECT DATE, SENTIMENT_INDEX, MOM_CHANGE FROM V_SENTIMENT_CHANGES "
+                "WHERE SENTIMENT_INDEX IS NOT NULL ORDER BY DATE DESC LIMIT 1"
+            )
+            if r:
+                parts.append(
+                    f"Latest Consumer Sentiment (UMich): {r[0][1]:.1f} as of {r[0][0]}, "
+                    f"MoM change: {r[0][2]:+.1f} pts"
+                )
+        except Exception as e:
+            logger.warning("Failed to fetch consumer sentiment: %s", e)
+
+    if any(kw in q for kw in ['breakeven', 'inflation expectation', 'tips', 'treasury']):
+        try:
+            _, r = run_query(
+                "SELECT DATE, INFLATION_EXPECTATION_PCT FROM V_FRED_INFLATION_EXPECTATIONS "
+                "WHERE INFLATION_EXPECTATION_PCT IS NOT NULL ORDER BY DATE DESC LIMIT 1"
+            )
+            if r:
+                parts.append(
+                    f"10Y Breakeven Inflation: {r[0][1] * 100:.2f}% as of {r[0][0]}"
+                )
+        except Exception as e:
+            logger.warning("Failed to fetch inflation expectations: %s", e)
+
+    if any(kw in q for kw in ['yield curve', 'inversion', 'inverted', '10y', '10-year']):
+        try:
+            _, r = run_query(
+                "SELECT DATE, TREASURY_10Y, FED_FUNDS_RATE, CURVE_SPREAD, IS_INVERTED "
+                "FROM V_YIELD_CURVE ORDER BY DATE DESC LIMIT 1"
+            )
+            if r:
+                parts.append(
+                    f"Yield curve as of {r[0][0]}: 10Y={r[0][1]*100:.2f}%, "
+                    f"FFR={r[0][2]*100:.2f}%, spread={r[0][3]*100:.2f}%"
+                    + (" (INVERTED)" if r[0][4] else "")
+                )
+        except Exception as e:
+            logger.warning("Failed to fetch yield curve: %s", e)
+
     return '\n'.join(parts)
 
 
@@ -495,180 +921,306 @@ def stream_text(text):
 # =====================================================================
 if st.session_state.level is None:
 
-    st.markdown("""
-    <style>
-    [data-testid="collapsedControl"] { display: none !important; }
-    section[data-testid="stSidebar"]  { display: none !important; }
-    header[data-testid="stHeader"]    { display: none !important; }
-    .block-container { padding-top: 0 !important; padding-bottom: 0 !important; }
-    [data-testid="stAppViewBlockContainer"] { padding-top: 0 !important; padding-bottom: 0 !important; }
-    iframe { border: none !important; }
-    </style>
-    """, unsafe_allow_html=True)
-
     hour = datetime.datetime.now().hour
     greeting = (
         'Good morning' if hour < 12
         else ('Good afternoon' if hour < 18 else 'Good evening')
     )
+    _today_str = datetime.date.today().strftime('%b %d, %Y')
 
     _landing = """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
-    .ml-orbit-scene *  { margin:0; padding:0; box-sizing:border-box; }
-    .ml-orbit-scene    { font-family:'Inter',sans-serif; }
+    /* ── Hide Streamlit chrome ───────────────────────────────────────── */
+    [data-testid="collapsedControl"]           { display:none !important; }
+    section[data-testid="stSidebar"]            { display:none !important; }
+    header[data-testid="stHeader"]              { display:none !important; }
+    .block-container,
+    [data-testid="stAppViewBlockContainer"]     { padding:0 !important; margin:0 !important; max-width:100% !important; }
+    /* Full dark page */
+    [data-testid="stApp"], .stApp              { background:#07071a !important; }
 
+    /* ── Reset ───────────────────────────────────────────────────────── */
+    .ml-land * { box-sizing:border-box; margin:0; padding:0; }
+    .ml-land   { font-family:'Inter',sans-serif; }
+
+    /* ── Page wrapper ────────────────────────────────────────────────── */
+    .ml-land {
+        position:relative; min-height:100vh; width:100%;
+        background:
+            radial-gradient(ellipse 90% 55% at 50% -5%,  rgba(102,126,234,0.18) 0%, transparent 65%),
+            radial-gradient(ellipse 55% 40% at 10% 110%, rgba(118,75,162,0.13) 0%, transparent 60%),
+            #07071a;
+        display:flex; flex-direction:column; align-items:center;
+        overflow:hidden; padding-bottom:1.5rem;
+    }
+    /* Dot-grid texture */
+    .ml-land::before {
+        content:''; position:absolute; inset:0; pointer-events:none;
+        background-image: radial-gradient(circle, rgba(102,126,234,0.10) 1px, transparent 1px);
+        background-size: 38px 38px;
+    }
+
+    /* ── Top status bar ──────────────────────────────────────────────── */
+    .ml-topbar {
+        width:100%; display:flex; justify-content:space-between; align-items:center;
+        padding:1.1rem 2.5rem; position:relative; z-index:10;
+    }
+    .ml-topbar-brand {
+        font-size:0.82rem; font-weight:700; letter-spacing:0.12em;
+        text-transform:uppercase; color:rgba(140,155,255,0.8);
+    }
+    .ml-topbar-right {
+        display:flex; align-items:center; gap:0.55rem;
+        font-size:0.75rem; color:rgba(140,150,200,0.65);
+    }
+    .ml-live-dot {
+        width:7px; height:7px; border-radius:50%; background:#00e676; flex-shrink:0;
+        animation:mlDotPulse 2s ease-in-out infinite;
+    }
+    @keyframes mlDotPulse {
+        0%,100% { opacity:1;   box-shadow:0 0 0 0   rgba(0,230,118,0.5); }
+        50%      { opacity:0.7; box-shadow:0 0 0 5px rgba(0,230,118,0);   }
+    }
+
+    /* ── Hero ────────────────────────────────────────────────────────── */
+    .ml-hero {
+        text-align:center; position:relative; z-index:5;
+        margin-top:0.2rem; margin-bottom:1.4rem;
+    }
+    .ml-hero-icon { font-size:2.8rem; line-height:1; margin-bottom:0.3rem; }
+    .ml-hero-title {
+        font-size:3.6rem; font-weight:800; letter-spacing:-1.5px; line-height:1.05;
+        background:linear-gradient(135deg, #b0bdff 0%, #7b8ff7 35%, #9f6edd 100%);
+        -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    }
+    .ml-hero-sub {
+        font-size:0.98rem; font-weight:300; margin-top:0.45rem;
+        color:rgba(170,178,230,0.75); letter-spacing:0.01em;
+    }
+
+    /* ── Tech pills ──────────────────────────────────────────────────── */
+    .ml-pills {
+        display:flex; justify-content:center; flex-wrap:wrap; gap:0.45rem;
+        margin-top:1.1rem; position:relative; z-index:5;
+    }
+    .ml-pill {
+        font-size:0.68rem; font-weight:600; letter-spacing:0.06em; text-transform:uppercase;
+        padding:0.25rem 0.7rem; border-radius:999px;
+        border:1px solid rgba(102,126,234,0.38);
+        background:rgba(102,126,234,0.09);
+        color:rgba(170,185,255,0.88);
+    }
+
+    /* ── Orbit scene ─────────────────────────────────────────────────── */
     .ml-orbit-scene {
-        position: relative; width: 100%; height: 680px;
-        display: flex; justify-content: center; align-items: center;
-        overflow: visible;
+        position:relative; width:100%; height:430px;
+        display:flex; justify-content:center; align-items:center;
+        overflow:visible; z-index:5;
     }
-
-    /* ---- rectangular logo card ---- */
-    .ml-orbit-center {
-        position: relative; z-index: 10; text-align: center;
-        pointer-events: none;
-        padding: 2.2rem 3.4rem;
-        border-radius: 18px;
-        background: rgba(20, 20, 35, 0.82);
-        border: 1.5px solid rgba(102, 126, 234, 0.35);
-        box-shadow: 0 0 60px rgba(102, 126, 234, 0.15),
-                    0 0 120px rgba(118, 75, 162, 0.08);
-    }
-    .ml-logo-glow {
-        position: absolute; top: 50%; left: 50%;
-        transform: translate(-50%,-50%);
-        width: 320px; height: 200px;
-        background: radial-gradient(ellipse, rgba(102,126,234,0.18) 0%, transparent 70%);
-        border-radius: 50%;
-        animation: mlGlowPulse 4s ease-in-out infinite;
-    }
-    @keyframes mlGlowPulse {
-        0%,100% { transform: translate(-50%,-50%) scale(1);   opacity:.5; }
-        50%     { transform: translate(-50%,-50%) scale(1.2);  opacity:1; }
-    }
-    .ml-logo-text {
-        font-size: 2.8rem; font-weight: 700; position: relative;
-        background: linear-gradient(135deg,#667eea,#764ba2);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        background-clip: text; color: transparent;
-        letter-spacing: -0.5px;
-    }
-    .ml-logo-icon { font-size: 2.4rem; margin-bottom: .3rem; position: relative; }
-    .ml-logo-sub {
-        font-size: 1rem; color: rgba(160,160,180,0.85); margin-top: .6rem;
-        font-weight: 300; position: relative;
-    }
-
-    /* ---- orbit trail (decorative ellipse ring) ---- */
     .ml-orbit-trail {
-        position: absolute; top: 50%; left: 50%;
-        width: 894px; height: 520px;
-        transform: translate(-50%, -50%);
-        border: 1px solid rgba(102, 126, 234, 0.1);
-        border-radius: 50%;
-        pointer-events: none;
+        position:absolute; top:50%; left:50%;
+        width:820px; height:420px;
+        transform:translate(-50%,-50%);
+        border:1px solid rgba(102,126,234,0.11);
+        border-radius:50%; pointer-events:none;
+    }
+    .ml-orbit-trail::after {
+        content:''; position:absolute; inset:-4px; border-radius:50%;
+        border:1px dashed rgba(102,126,234,0.06);
     }
 
-    /* ---- ellipse wrapper: stretches circle into ellipse ---- */
+    /* Center card */
+    .ml-center-card {
+        position:relative; z-index:10; text-align:center; pointer-events:none;
+        padding:1.4rem 2.8rem; border-radius:20px;
+        background:rgba(12,12,32,0.88);
+        border:1.5px solid rgba(102,126,234,0.28);
+        backdrop-filter:blur(16px);
+        box-shadow:0 0 50px rgba(102,126,234,0.14), 0 0 100px rgba(118,75,162,0.07),
+                   inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+    .ml-center-title {
+        font-size:1.55rem; font-weight:700;
+        background:linear-gradient(135deg,#a0b0ff,#7b8ff7);
+        -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    }
+    .ml-center-sub {
+        font-size:0.82rem; color:rgba(140,150,200,0.72); margin-top:0.3rem; font-weight:300;
+    }
+    .ml-center-arrow {
+        margin-top:0.6rem; font-size:0.75rem; color:rgba(102,126,234,0.55);
+        letter-spacing:0.05em; text-transform:uppercase; font-weight:500;
+    }
+
+    /* Orbit mechanics */
     .ml-orbit-ellipse {
-        position: absolute; top: 50%; left: 50%;
-        width: 0; height: 0;
-        transform: scaleX(1.72);
+        position:absolute; top:50%; left:50%; width:0; height:0;
+        transform:scaleX(1.72);
     }
-
-    .ml-orbit-ring {
-        animation: mlOrbitSpin 30s linear infinite;
-        will-change: transform;
-    }
-    @keyframes mlOrbitSpin {
-        from { transform: rotate(0deg); }
-        to   { transform: rotate(360deg); }
-    }
+    .ml-orbit-ring { animation:mlOrbitSpin 34s linear infinite; will-change:transform; }
+    @keyframes mlOrbitSpin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
 
     .ml-orbit-slot {
-        position: absolute; width: 210px;
-        margin-left: -105px; margin-top: -88px;
-        top: 0; left: 0;
+        position:absolute; width:200px;
+        margin-left:-100px; margin-top:-90px; top:0; left:0;
     }
-    .ml-slot-1 { transform: translateY(-260px); }
-    .ml-slot-2 { transform: rotate(120deg) translateY(-260px); }
-    .ml-slot-3 { transform: rotate(240deg) translateY(-260px); }
+    .ml-slot-1 { transform:translateY(-232px); }
+    .ml-slot-2 { transform:rotate(120deg) translateY(-232px); }
+    .ml-slot-3 { transform:rotate(240deg) translateY(-232px); }
 
-    a.ml-planet {
-        display: block; text-decoration: none; color: white;
-        cursor: pointer; will-change: transform;
-    }
-    .ml-slot-1 a.ml-planet { animation: mlC1 30s linear infinite; }
-    .ml-slot-2 a.ml-planet { animation: mlC2 30s linear infinite; }
-    .ml-slot-3 a.ml-planet { animation: mlC3 30s linear infinite; }
+    a.ml-planet { display:block; text-decoration:none; color:white; cursor:pointer; }
+    .ml-slot-1 a.ml-planet { animation:mlC1 34s linear infinite; }
+    .ml-slot-2 a.ml-planet { animation:mlC2 34s linear infinite; }
+    .ml-slot-3 a.ml-planet { animation:mlC3 34s linear infinite; }
     @keyframes mlC1 { from{transform:rotate(0deg)    scaleX(0.581)} to{transform:rotate(-360deg) scaleX(0.581)} }
     @keyframes mlC2 { from{transform:rotate(-120deg) scaleX(0.581)} to{transform:rotate(-480deg) scaleX(0.581)} }
     @keyframes mlC3 { from{transform:rotate(-240deg) scaleX(0.581)} to{transform:rotate(-600deg) scaleX(0.581)} }
 
+    /* Planet cards */
     .ml-p-card {
-        padding: 1.5rem 1.3rem; border-radius: 20px;
-        text-align: center; color: white;
-        box-shadow: 0 8px 32px rgba(0,0,0,.25);
-        transition: box-shadow .25s, transform .25s;
+        padding:1.2rem 1rem; border-radius:18px; text-align:center; color:white;
+        border:1px solid rgba(255,255,255,0.13);
+        box-shadow:0 8px 30px rgba(0,0,0,.40), inset 0 1px 0 rgba(255,255,255,0.08);
+        transition:transform .22s, box-shadow .22s;
     }
-    .ml-p-card:hover {
-        transform: scale(1.08);
-        box-shadow: 0 16px 48px rgba(0,0,0,.4);
-    }
-    .ml-p-icon  { font-size: 2.2rem; margin-bottom: .5rem; }
-    .ml-p-name  { font-size: 1.1rem; font-weight: 700; margin-bottom: .3rem; }
-    .ml-p-tag   { font-size: .78rem; opacity: .88; line-height: 1.35; }
+    .ml-p-card:hover { transform:scale(1.09); box-shadow:0 18px 52px rgba(0,0,0,.55); }
+    .ml-p-icon { font-size:1.9rem; margin-bottom:.35rem; }
+    .ml-p-name { font-size:0.95rem; font-weight:700; margin-bottom:.2rem; }
+    .ml-p-tag  { font-size:.70rem; opacity:.85; line-height:1.4; margin-bottom:.5rem; }
+    .ml-p-divider { border:none; border-top:1px solid rgba(255,255,255,0.15); margin:.45rem 0; }
+    .ml-p-feat { font-size:.62rem; opacity:.75; line-height:1.7; text-align:left; padding:0 .2rem; }
 
-    .ml-grad-green  { background: linear-gradient(135deg,#43e97b,#38f9d7); }
-    .ml-grad-purple { background: linear-gradient(135deg,#667eea,#764ba2); }
-    .ml-grad-orange { background: linear-gradient(135deg,#f7971e,#ffd200); }
+    .ml-grad-green  { background:linear-gradient(135deg, rgba(43,210,120,.90), rgba(30,200,175,.90)); }
+    .ml-grad-purple { background:linear-gradient(135deg, rgba(102,126,234,.90), rgba(118,75,162,.90)); }
+    .ml-grad-orange { background:linear-gradient(135deg, rgba(240,140,30,.90), rgba(255,200,0,.90)); }
+
+    /* ── Bottom feature strip ────────────────────────────────────────── */
+    .ml-strip {
+        display:flex; justify-content:center; flex-wrap:wrap; gap:0.25rem 1.8rem;
+        position:relative; z-index:5; margin-top:0.2rem; padding:0 1rem;
+    }
+    .ml-strip-item {
+        display:flex; align-items:center; gap:0.35rem;
+        font-size:0.73rem; color:rgba(140,150,200,0.60); font-weight:500;
+        white-space:nowrap;
+    }
+    .ml-strip-dot { font-size:0.65rem; color:rgba(102,126,234,0.45); }
     </style>
 
-    <div class="ml-orbit-scene">
+    <div class="ml-land">
+
+      <!-- Top status bar -->
+      <div class="ml-topbar">
+        <div class="ml-topbar-brand">MarketLens</div>
+        <div class="ml-topbar-right">
+          <div class="ml-live-dot"></div>
+          Kafka streaming active &nbsp;·&nbsp; __DATE__
+        </div>
+      </div>
+
+      <!-- Hero -->
+      <div class="ml-hero">
+        <div class="ml-hero-icon">🔍</div>
+        <div class="ml-hero-title">MarketLens</div>
+        <div class="ml-hero-sub">AI-powered market intelligence &nbsp;·&nbsp; real-time signals &nbsp;·&nbsp; multi-source data</div>
+      </div>
+
+      <!-- Tech pills -->
+      <div class="ml-pills">
+        <span class="ml-pill">⚡ Kafka</span>
+        <span class="ml-pill">❄️ Snowflake</span>
+        <span class="ml-pill">🔧 dbt</span>
+        <span class="ml-pill">🏛 FRED API</span>
+        <span class="ml-pill">🤖 Cortex AI</span>
+        <span class="ml-pill">✈️ Airflow</span>
+        <span class="ml-pill">📈 yfinance</span>
+        <span class="ml-pill">🗂 SEC EDGAR</span>
+      </div>
+
+      <!-- Orbit scene -->
+      <div class="ml-orbit-scene">
         <div class="ml-orbit-trail"></div>
 
-        <div class="ml-orbit-center">
-            <div class="ml-logo-glow"></div>
-            <div class="ml-logo-icon">🔍</div>
-            <div class="ml-logo-text">MarketLens</div>
-            <div class="ml-logo-sub">__GREETING__! Pick your level to get started.</div>
+        <div class="ml-center-card">
+          <div class="ml-center-title">__GREETING__!</div>
+          <div class="ml-center-sub">Choose your experience below to get started</div>
+          <div class="ml-center-arrow">↻ click any card</div>
         </div>
 
         <div class="ml-orbit-ellipse">
-            <div class="ml-orbit-ring">
-                <div class="ml-orbit-slot ml-slot-1">
-                    <a href="?level=curious" class="ml-planet">
-                        <div class="ml-p-card ml-grad-green">
-                            <div class="ml-p-icon">🌱</div>
-                            <div class="ml-p-name">Just Curious</div>
-                            <div class="ml-p-tag">Zero finance background —<br>explain like I'm five!</div>
-                        </div>
-                    </a>
+          <div class="ml-orbit-ring">
+
+            <div class="ml-orbit-slot ml-slot-1">
+              <a href="?level=curious" class="ml-planet">
+                <div class="ml-p-card ml-grad-green">
+                  <div class="ml-p-icon">🌱</div>
+                  <div class="ml-p-name">Just Curious</div>
+                  <div class="ml-p-tag">Zero finance background —<br>explain like I'm five!</div>
+                  <hr class="ml-p-divider">
+                  <div class="ml-p-feat">
+                    📖 Plain-English market story<br>
+                    📊 Live price snapshot<br>
+                    💬 AI chat with analogies
+                  </div>
                 </div>
-                <div class="ml-orbit-slot ml-slot-2">
-                    <a href="?level=intermediate" class="ml-planet">
-                        <div class="ml-p-card ml-grad-purple">
-                            <div class="ml-p-icon">📊</div>
-                            <div class="ml-p-name">Know the Basics</div>
-                            <div class="ml-p-tag">I understand stocks &amp; bonds —<br>show me what's interesting.</div>
-                        </div>
-                    </a>
-                </div>
-                <div class="ml-orbit-slot ml-slot-3">
-                    <a href="?level=analyst" class="ml-planet">
-                        <div class="ml-p-card ml-grad-orange">
-                            <div class="ml-p-icon">🎯</div>
-                            <div class="ml-p-name">Financial Analyst</div>
-                            <div class="ml-p-tag">Give me z-scores, signals,<br>and raw data.</div>
-                        </div>
-                    </a>
-                </div>
+              </a>
             </div>
+
+            <div class="ml-orbit-slot ml-slot-2">
+              <a href="?level=intermediate" class="ml-planet">
+                <div class="ml-p-card ml-grad-purple">
+                  <div class="ml-p-icon">📊</div>
+                  <div class="ml-p-name">Know the Basics</div>
+                  <div class="ml-p-tag">I understand stocks &amp; bonds —<br>show me what's moving.</div>
+                  <hr class="ml-p-divider">
+                  <div class="ml-p-feat">
+                    🚀 Top gainers &amp; losers<br>
+                    🔔 Live signal feed<br>
+                    📰 AI market insights
+                  </div>
+                </div>
+              </a>
+            </div>
+
+            <div class="ml-orbit-slot ml-slot-3">
+              <a href="?level=analyst" class="ml-planet">
+                <div class="ml-p-card ml-grad-orange">
+                  <div class="ml-p-icon">🎯</div>
+                  <div class="ml-p-name">Financial Analyst</div>
+                  <div class="ml-p-tag">Z-scores, signals, macro —<br>give me everything.</div>
+                  <hr class="ml-p-divider">
+                  <div class="ml-p-feat">
+                    📉 Signal heatmap &amp; deep dive<br>
+                    🏦 7 macro overlays<br>
+                    ⚡ Kafka live feed
+                  </div>
+                </div>
+              </a>
+            </div>
+
+          </div>
         </div>
+      </div>
+
+      <!-- Bottom data strip -->
+      <div class="ml-strip">
+        <span class="ml-strip-item">📡 9 tickers monitored</span>
+        <span class="ml-strip-dot">·</span>
+        <span class="ml-strip-item">🔔 10 signal types</span>
+        <span class="ml-strip-dot">·</span>
+        <span class="ml-strip-item">🏦 7 macro indicators</span>
+        <span class="ml-strip-dot">·</span>
+        <span class="ml-strip-item">🔧 13 dbt models</span>
+        <span class="ml-strip-dot">·</span>
+        <span class="ml-strip-item">📄 SEC 10-K/10-Q filings</span>
+        <span class="ml-strip-dot">·</span>
+        <span class="ml-strip-item">⚡ Kafka 4-consumer fan-out</span>
+      </div>
+
     </div>
-    """.replace("__GREETING__", greeting)
+    """.replace("__GREETING__", greeting).replace("__DATE__", _today_str)
 
     st.html(_landing)
 
@@ -697,6 +1249,14 @@ st.markdown(f"""
 
 # ── Sidebar ──────────────────────────────────────────────────────────
 with st.sidebar:
+    # Admin Mode toggle — always visible at top of sidebar
+    _admin_col1, _admin_col2 = st.columns([1, 1])
+    with _admin_col2:
+        st.session_state.admin_mode = st.toggle(
+            '⚙ Admin',
+            value=st.session_state.admin_mode,
+            help='Show tech-stack explainer notes on every page — great for demos & presentations.',
+        )
     st.markdown(f"### {cfg['icon']} {cfg['label']} Mode")
     if st.button('↩ Change level', use_container_width=True):
         st.session_state.level = None
@@ -706,7 +1266,7 @@ with st.sidebar:
 
     if cfg['show_signals']:
         st.markdown('---')
-        _page_options = ['Chat', 'Stock Deep Dive', 'Macro Overlay', 'Pipeline Health']
+        _page_options = ['Chat', 'Stock Deep Dive', 'Macro Overlay', 'Pipeline Health', 'Live Feed']
         _chosen_page = st.radio(
             'Navigate',
             _page_options,
@@ -755,11 +1315,18 @@ with st.sidebar:
                 sdf = pd.DataFrame()
         if not sdf.empty:
             for idx, row in sdf.iterrows():
-                icon = '📈' if row['MAGNITUDE'] >= 0 else '📉'
-                summary_text = (
-                    f"{icon} **{row['ENTITY']}** {row['MAGNITUDE']:+.1f}%  \n"
-                    f"{row['SUMMARY']}"
-                )
+                magnitude = row['MAGNITUDE']  # may be None for non-price signals
+                sig_type   = row.get('SIGNAL_TYPE', '')
+                if magnitude is not None:
+                    icon = '📈' if magnitude >= 0 else '📉'
+                    header = f"{icon} **{row['ENTITY']}** {magnitude:+.1f}%"
+                elif sig_type == 'SEC_FILING':
+                    icon = '📄'
+                    header = f"{icon} **{row['ENTITY']}**"
+                else:
+                    icon = '📊'
+                    header = f"{icon} **{row['ENTITY']}**"
+                summary_text = f"{header}  \n{row['SUMMARY']}"
                 details = get_signal_details(
                     row['SIGNAL_TYPE'], row['ENTITY'], row['DATE'],
                 )
@@ -770,6 +1337,23 @@ with st.sidebar:
                     st.caption(summary_text)
         else:
             st.caption("⚠ Could not load signals.")
+
+        # SEC filing tone breakdown
+        st.markdown('---')
+        st.markdown('**📄 SEC Filing Tones**')
+        try:
+            _tone_df = get_sec_tone_breakdown()
+        except Exception:
+            _tone_df = pd.DataFrame()
+        if not _tone_df.empty:
+            _tone_icons = {
+                'POSITIVE': '🟢', 'NEUTRAL': '⚪', 'CAUTIOUS': '🟡', 'NEGATIVE': '🔴', 'UNKNOWN': '⬜',
+            }
+            for _, _tr in _tone_df.iterrows():
+                _tico = _tone_icons.get(_tr['TONE'], '⬜')
+                st.caption(f"{_tico} {_tr['TONE'].title()}: **{int(_tr['CNT'])}** filings")
+        else:
+            st.caption("No filing data available.")
 
     if cfg['show_market_pulse']:
         st.markdown('---')
@@ -809,6 +1393,16 @@ with st.sidebar:
 # =====================================================================
 if st.session_state.page == 'stock_deep_dive':
     st.markdown('#### 📈 Stock Deep Dive')
+    _tech_note(
+        'Stock Deep Dive — yfinance → Snowflake → dbt → Z-score',
+        'Price ingestion: `ingestion/stock_producer.py` fetches OHLCV from yfinance → '
+        'writes to `RAW_STOCK_PRICES` in Snowflake. '
+        'dbt staging model `stg_stock_prices` normalises the data. '
+        'dbt mart model `anomaly_scores` computes a 20-day rolling Z-score for each ticker\'s daily return → '
+        'exposed as the Snowflake view `V_ANOMALY_SCORES` queried by this page.',
+    )
+    _render_stats_ribbon()
+
     dd_ticker = st.selectbox(
         'Select Ticker',
         TICKERS,
@@ -817,6 +1411,81 @@ if st.session_state.page == 'stock_deep_dive':
     )
     dd_period = st.radio('Period', ['30D', '90D', '180D'], horizontal=True, key='dd_period')
     dd_days   = {'30D': 30, '90D': 90, '180D': 180}[dd_period]
+
+    # ── Ticker summary header cards ────────────────────────────────────
+    with st.spinner('Loading indicator summary...'):
+        _tsig = get_ticker_signal_summary(dd_ticker)
+    _hc = st.columns(4)
+    # RSI card
+    with _hc[0]:
+        _rsi_val  = _tsig.get('rsi')
+        _rsi_st   = _tsig.get('rsi_state', '—')
+        _rsi_col  = ('#ff4444' if _rsi_st == 'OVERBOUGHT'
+                     else '#44aaff' if _rsi_st == 'OVERSOLD' else '#aaaaaa')
+        st.markdown(
+            f"""<div style="background:rgba(20,20,40,0.7);border-radius:10px;
+                border:1px solid rgba(102,126,234,0.3);padding:0.7rem;text-align:center;">
+                <div style="font-size:0.72rem;color:#999;">RSI (14)</div>
+                <div style="font-size:1.5rem;font-weight:700;color:{_rsi_col};">
+                    {f'{_rsi_val:.1f}' if _rsi_val is not None else '—'}
+                </div>
+                <div style="font-size:0.7rem;color:{_rsi_col};">{_rsi_st}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    # MA crossover card
+    with _hc[1]:
+        _ma_ev  = _tsig.get('ma_event', '—') or '—'
+        _ma_col = ('#44cc44' if _ma_ev == 'GOLDEN_CROSS'
+                   else '#ff4444' if _ma_ev == 'DEATH_CROSS' else '#aaaaaa')
+        _ma_icon = '☀️' if _ma_ev == 'GOLDEN_CROSS' else '💀' if _ma_ev == 'DEATH_CROSS' else '—'
+        st.markdown(
+            f"""<div style="background:rgba(20,20,40,0.7);border-radius:10px;
+                border:1px solid rgba(102,126,234,0.3);padding:0.7rem;text-align:center;">
+                <div style="font-size:0.72rem;color:#999;">MA Crossover</div>
+                <div style="font-size:1.5rem;">{_ma_icon}</div>
+                <div style="font-size:0.7rem;color:{_ma_col};">{_ma_ev.replace('_',' ')}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    # Drawdown card
+    with _hc[2]:
+        _dd_pct = _tsig.get('drawdown_pct')
+        _dd_st  = _tsig.get('drawdown_state', '—') or '—'
+        _dd_col = ('#ff4444' if _dd_st in ('BEAR_MARKET', 'CORRECTION')
+                   else '#ffaa44' if _dd_st == 'PULLBACK' else '#aaaaaa')
+        st.markdown(
+            f"""<div style="background:rgba(20,20,40,0.7);border-radius:10px;
+                border:1px solid rgba(102,126,234,0.3);padding:0.7rem;text-align:center;">
+                <div style="font-size:0.72rem;color:#999;">Drawdown from 52W High</div>
+                <div style="font-size:1.5rem;font-weight:700;color:{_dd_col};">
+                    {f'{_dd_pct*100:+.1f}%' if _dd_pct is not None else '—'}
+                </div>
+                <div style="font-size:0.7rem;color:{_dd_col};">{_dd_st.replace('_',' ')}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    # Anomaly count card
+    with _hc[3]:
+        with st.spinner(''):
+            try:
+                _adf = get_anomaly_data(dd_ticker, dd_days)
+                _anom_cnt = int((_adf['IS_ANOMALY'] == True).sum()) if not _adf.empty else 0
+            except Exception:
+                _anom_cnt = 0
+        _anom_col = '#ff4444' if _anom_cnt > 3 else '#ffaa44' if _anom_cnt > 0 else '#aaaaaa'
+        st.markdown(
+            f"""<div style="background:rgba(20,20,40,0.7);border-radius:10px;
+                border:1px solid rgba(102,126,234,0.3);padding:0.7rem;text-align:center;">
+                <div style="font-size:0.72rem;color:#999;">Anomalies in Period</div>
+                <div style="font-size:1.5rem;font-weight:700;color:{_anom_col};">{_anom_cnt}</div>
+                <div style="font-size:0.7rem;color:{_anom_col};">
+                    {'high activity' if _anom_cnt > 3 else 'some activity' if _anom_cnt > 0 else 'quiet'}
+                </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    st.markdown('<div style="margin-bottom:0.8rem;"></div>', unsafe_allow_html=True)
 
     with st.spinner('Loading anomaly data...'):
         try:
@@ -855,6 +1524,34 @@ if st.session_state.page == 'stock_deep_dive':
             st.info('No anomaly days in the selected period.')
     else:
         st.info('No data available for this ticker.')
+
+    # ── Signal Heatmap ─────────────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('#### 🔥 Signal Heatmap — All Tickers')
+    st.caption('Counts of each signal type fired per ticker across all recorded history.')
+    with st.spinner('Loading heatmap...'):
+        try:
+            _hm_df = get_signal_heatmap_data()
+        except Exception:
+            _hm_df = pd.DataFrame()
+    if not _hm_df.empty:
+        _pivot = (
+            _hm_df.pivot_table(index='ENTITY', columns='SIGNAL_TYPE', values='CNT', aggfunc='sum', fill_value=0)
+            .reindex(index=[t for t in WATCHLIST_TICKERS if t in _hm_df['ENTITY'].values])
+        )
+        if not _pivot.empty:
+            # Style: background gradient per column so each signal type scales independently
+            _styled = (
+                _pivot.style
+                .background_gradient(cmap='YlOrRd', axis=0)
+                .format('{:.0f}')
+            )
+            st.dataframe(_styled, use_container_width=True)
+        else:
+            st.info('Not enough data to build heatmap yet.')
+    else:
+        st.info('Heatmap data unavailable.')
+
     st.stop()
 
 # =====================================================================
@@ -862,6 +1559,20 @@ if st.session_state.page == 'stock_deep_dive':
 # =====================================================================
 if st.session_state.page == 'macro_overlay':
     st.markdown('#### 🏦 Macro Overlay')
+    _tech_note(
+        'Macro Overlay — Snowflake Marketplace + FRED API + dbt',
+        'Fed Funds Rate & CPI: free Snowflake Marketplace dataset (`SNOWFLAKE_PUBLIC_DATA_FREE`) '
+        '→ dbt staging models → `V_FED_RATE_CHANGES`, `V_CPI_CHANGES`. '
+        'Yield Curve, GDP, Housing Starts, Consumer Sentiment, Inflation Expectations: '
+        'fetched via FRED API (St. Louis Fed, free key) by `ingestion/fred_producer.py` '
+        '→ `RAW_FRED_INDICATORS` (Snowflake) '
+        '→ dbt staging (`stg_fred_*`) → mart models '
+        '→ `V_YIELD_CURVE`, `V_GDP_CHANGES`, `V_FRED_HOUSING`, `V_SENTIMENT_CHANGES`, `V_FRED_INFLATION_EXPECTATIONS`.',
+    )
+    _render_stats_ribbon()
+
+    from config import FRED_API_KEY
+    _fred_available = bool(FRED_API_KEY)
 
     with st.spinner('Loading macro data...'):
         try:
@@ -874,9 +1585,21 @@ if st.session_state.page == 'macro_overlay':
         except Exception as _e:
             cpi_df = pd.DataFrame()
             st.warning(f'CPI data unavailable: {_e}')
-        yc_df = get_yield_curve_data()
+        yc_df       = get_yield_curve_data()        if _fred_available else pd.DataFrame()
+        gdp_df      = get_gdp_data()                if _fred_available else pd.DataFrame()
+        housing_df  = get_housing_data()             if _fred_available else pd.DataFrame()
+        sent_df     = get_sentiment_data()           if _fred_available else pd.DataFrame()
+        infexp_df   = get_inflation_expectations_data() if _fred_available else pd.DataFrame()
 
-    tab1, tab2, tab3 = st.tabs(['Fed Funds Rate', 'CPI', 'Yield Curve'])
+    _fred_note = (
+        'Requires a free FRED API key — set `FRED_API_KEY` in `.env` then run '
+        '`python run_fred_ingest.py`.'
+    )
+
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        'Fed Funds Rate', 'CPI', 'Yield Curve',
+        'GDP', 'Housing Starts', 'Consumer Sentiment', 'Inflation Expectations',
+    ])
 
     with tab1:
         if not fed_df.empty:
@@ -921,10 +1644,69 @@ if st.session_state.page == 'macro_overlay':
             if 'TREASURY_10Y' in yc_df.columns:
                 st.line_chart(yc_df.set_index('DATE')[['TREASURY_10Y', 'FED_FUNDS_RATE', 'CURVE_SPREAD']])
         else:
-            st.info(
-                'Yield curve data requires the SNOWFLAKE_PUBLIC_DATA_PAID marketplace subscription.\n'
-                'Set SNOWFLAKE_PAID_DATA_AVAILABLE=true and run signals/06_new_macro_signals.sql.'
+            st.info('No yield curve data available.' if _fred_available else _fred_note)
+
+    with tab4:
+        if not gdp_df.empty:
+            gdp_df['DATE'] = pd.to_datetime(gdp_df['DATE'])
+            gdp_df = gdp_df.sort_values('DATE')
+            contractions = int(gdp_df['IS_CONTRACTION'].sum()) if 'IS_CONTRACTION' in gdp_df.columns else 0
+            if contractions >= 2:
+                st.error(f'{contractions} consecutive contraction quarters — possible recession signal')
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown('**Real GDP (Billions, SAAR)**')
+                st.line_chart(gdp_df.set_index('DATE')[['GDP_REAL_BILLIONS']])
+            with col2:
+                st.markdown('**Quarter-over-Quarter Growth (%)**')
+                st.bar_chart(gdp_df.set_index('DATE')[['QOQ_GROWTH_PCT']])
+        else:
+            st.info('No GDP data available.' if _fred_available else _fred_note)
+
+    with tab5:
+        if not housing_df.empty:
+            housing_df['DATE'] = pd.to_datetime(housing_df['DATE'])
+            housing_df = housing_df.sort_values('DATE')
+            st.markdown('**Housing Starts (Thousands of Units, SAAR)**')
+            st.line_chart(housing_df.set_index('DATE')[['HOUSING_STARTS_K']])
+        else:
+            st.info('No housing starts data available.' if _fred_available else _fred_note)
+
+    with tab6:
+        if not sent_df.empty:
+            sent_df['DATE'] = pd.to_datetime(sent_df['DATE'])
+            sent_df = sent_df.sort_values('DATE')
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown('**Consumer Sentiment Index (UMich)**')
+                st.line_chart(sent_df.set_index('DATE')[['SENTIMENT_INDEX']])
+            with col2:
+                st.markdown('**Month-over-Month Change (pts)**')
+                st.bar_chart(sent_df.set_index('DATE')[['MOM_CHANGE']])
+            sharp = sent_df[sent_df['SENTIMENT_EVENT'].notna()].copy()
+            if not sharp.empty:
+                st.markdown('**Sharp Moves**')
+                st.dataframe(sharp[['DATE', 'SENTIMENT_INDEX', 'MOM_CHANGE', 'SENTIMENT_EVENT']].rename(
+                    columns={'DATE': 'Date', 'SENTIMENT_INDEX': 'Index',
+                             'MOM_CHANGE': 'Change (pts)', 'SENTIMENT_EVENT': 'Event'}
+                ), use_container_width=True, hide_index=True)
+        else:
+            st.info('No consumer sentiment data available.' if _fred_available else _fred_note)
+
+    with tab7:
+        if not infexp_df.empty:
+            infexp_df['DATE'] = pd.to_datetime(infexp_df['DATE'])
+            infexp_df = infexp_df.sort_values('DATE')
+            infexp_df['INFEXP_PCT'] = infexp_df['INFLATION_EXPECTATION_PCT'] * 100
+            st.markdown('**10Y Breakeven Inflation Rate (%)**')
+            st.line_chart(infexp_df.set_index('DATE')[['INFEXP_PCT']])
+            latest = infexp_df.iloc[-1]
+            st.caption(
+                f"Latest: {latest['INFEXP_PCT']:.2f}% as of {str(latest['DATE'])[:10]} — "
+                "difference between 10Y nominal Treasury and 10Y TIPS yield (market-implied long-run inflation)"
             )
+        else:
+            st.info('No inflation expectations data available.' if _fred_available else _fred_note)
     st.stop()
 
 # =====================================================================
@@ -932,6 +1714,16 @@ if st.session_state.page == 'macro_overlay':
 # =====================================================================
 if st.session_state.page == 'pipeline_health':
     st.markdown('#### ⚙️ Pipeline Health')
+    _tech_note(
+        'Pipeline Health — Apache Airflow + Snowflake + Kafka Admin API',
+        'Task run log: every ingestion task (Airflow DAG `marketlens_daily` and `run_fred_ingest.py`) '
+        'calls `ingestion/pipeline_logger.py` which MERGEs a row into the Snowflake table '
+        '`PIPELINE_RUN_LOG` — tracking task name, status, row count, and duration. '
+        'Data Freshness: live row counts directly from `RAW_STOCK_PRICES` and `RAW_MACRO_INDICATORS`. '
+        'Kafka Stream Health: `KafkaAdminClient` queries each consumer group\'s committed offsets vs. '
+        'log-end offsets to compute per-group message lag in real time.',
+    )
+    _render_stats_ribbon()
 
     with st.spinner('Loading pipeline runs...'):
         runs_df, runs_err = get_pipeline_runs()
@@ -999,17 +1791,200 @@ if st.session_state.page == 'pipeline_health':
                 st.info('RAW_MACRO_INDICATORS is empty.')
         except Exception as _e:
             st.caption(f'RAW_MACRO_INDICATORS unavailable: {_e}')
+
+    # ── Kafka consumer lag ────────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('**⚡ Kafka Stream Health**')
+    lag = get_kafka_consumer_lag()
+    if not lag:
+        st.caption('Kafka not reachable — start with `docker compose -f docker-compose.kafka.yml up -d`')
+    else:
+        _lag_cols = st.columns(len(lag))
+        _icons = {'sf-writer': '🗄️', 'anomaly-check': '🔍', 'notifier': '🔔', 'dashboard': '📺'}
+        for i, (group, value) in enumerate(lag.items()):
+            with _lag_cols[i]:
+                if value is None:
+                    st.metric(_icons.get(group, '') + ' ' + group, 'offline')
+                else:
+                    st.metric(_icons.get(group, '') + ' ' + group,
+                              f'{value} msg lag',
+                              delta='live' if value == 0 else f'{value} behind',
+                              delta_color='normal' if value == 0 else 'inverse')
     st.stop()
+
+# =====================================================================
+#  PAGE: LIVE FEED
+# =====================================================================
+if st.session_state.page == 'live_feed':
+    import json as _json
+
+    _LIVE_FEED_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'live_feed.json',
+    )
+
+    st.markdown('#### ⚡ Live Price Feed')
+    st.caption(
+        'Simulated price ticks generated via GBM random walk, published by '
+        '`tick_producer` → Kafka `raw.stock.prices` → `dashboard_consumer` → this page. '
+        'Auto-refreshes every 2 seconds.'
+    )
+    _tech_note(
+        'Live Feed — Kafka Multi-Consumer Fan-out Architecture',
+        '`ingestion/tick_producer.py` generates one GBM price tick per ticker every 2 s '
+        '→ publishes to Kafka topic `raw.stock.prices` (broker: localhost:9092). '
+        'Four independent consumer groups each read this same stream with their own committed offsets: '
+        '`sf-writer` (→ Snowflake `RAW_STOCK_PRICES`), '
+        '`anomaly-check` (`ingestion/anomaly_consumer.py` — Z-score detector → publishes alerts to `signals.anomalies`), '
+        '`notifier` (`ingestion/notifier_consumer.py` → Slack webhook / email), '
+        '`dashboard` (`ingestion/dashboard_consumer.py` → writes `live_feed.json` atomically). '
+        'This page reads `live_feed.json` and re-renders via `@st.fragment(run_every=2)` — '
+        'no polling loop, Streamlit handles the re-execution automatically.',
+    )
+    _render_stats_ribbon()
+
+    _status_placeholder = st.empty()
+    _grid_placeholder   = st.empty()
+    _anomaly_placeholder = st.empty()
+
+    @st.fragment(run_every=2)
+    def _live_feed_fragment():
+        try:
+            with open(_LIVE_FEED_PATH) as _f:
+                _data = _json.load(_f)
+
+            _updated = _data.get('updated_at', '')[:19].replace('T', ' ')
+            _total   = _data.get('total_msgs', 0)
+            _tickers = _data.get('tickers', {})
+
+            _status_placeholder.caption(
+                f'Last update: **{_updated} UTC** — '
+                f'{_total:,} messages processed by dashboard consumer'
+            )
+
+            # Price grid — 3 columns
+            _cols = _grid_placeholder.columns(3)
+            for _i, _ticker in enumerate(sorted(_tickers)):
+                _info = _tickers[_ticker]
+                _price = _info.get('price', 0.0)
+                _chg   = _info.get('change_pct', 0.0)
+                with _cols[_i % 3]:
+                    st.metric(
+                        label=f"**{_ticker}**",
+                        value=f"${_price:.2f}",
+                        delta=f"{_chg:+.3f}%",
+                    )
+
+            # Anomaly feed
+            _anomaly_placeholder.markdown('---')
+            with _anomaly_placeholder.container():
+                st.markdown('**Anomaly events** (detected by `anomaly_consumer`)')
+
+                _ANOMALY_LOG = _LIVE_FEED_PATH.replace('live_feed.json', 'logs/anomaly_consumer.log')
+                try:
+                    with open(_ANOMALY_LOG) as _af:
+                        _lines = _af.readlines()
+                    _anomaly_lines = [_l.strip() for _l in _lines if 'ANOMALY' in _l][-10:]
+                    if _anomaly_lines:
+                        for _line in reversed(_anomaly_lines):
+                            st.code(_line, language=None)
+                    else:
+                        st.caption('No anomalies detected yet in this session.')
+                except FileNotFoundError:
+                    st.caption('Anomaly log not found — streaming services may not be running.')
+
+        except FileNotFoundError:
+            _status_placeholder.info(
+                'Live feed not active. Start streaming services with:\n\n'
+                '```bash\n'
+                'docker compose -f docker-compose.kafka.yml up -d\n'
+                'bash start_streaming.sh\n'
+                '```'
+            )
+        except Exception as _e:
+            _status_placeholder.warning(f'Live feed error: {_e}')
+
+    _live_feed_fragment()
+    st.stop()
+
+# ── What's Moving (Know the Basics + Analyst — only on fresh chat page) ──
+if cfg['show_market_pulse'] and not st.session_state.messages:
+    st.markdown('#### 🚀 What\'s Moving Today')
+    with st.spinner('Loading movers...'):
+        _movers: dict = {}
+        for _t in WATCHLIST_TICKERS:
+            try:
+                _p, _c, _ = get_latest_price(_t)
+                if _p is not None:
+                    _movers[_t] = (_p, _c)
+            except Exception:
+                pass
+    if _movers:
+        _sorted_movers = sorted(_movers.items(), key=lambda x: x[1][1], reverse=True)
+        _gainers = _sorted_movers[:3]
+        _losers  = _sorted_movers[-3:]
+        _mc1, _mc2 = st.columns(2)
+        with _mc1:
+            st.markdown('**📈 Top Gainers**')
+            for _t, (_p, _c) in _gainers:
+                _name = TICKER_NAMES.get(_t, _t)
+                st.markdown(
+                    f"""<div style="display:flex;justify-content:space-between;align-items:center;
+                        padding:0.4rem 0.8rem;margin-bottom:0.3rem;border-radius:8px;
+                        background:rgba(0,200,83,0.10);border:1px solid rgba(0,200,83,0.25);">
+                        <span style="font-weight:600;color:#000;">{_name} <span style="color:#000;font-size:0.8rem;">({_t})</span></span>
+                        <span style="font-weight:700;color:#00c853;">${_p:.2f} &nbsp; +{_c:.2f}%</span>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+        with _mc2:
+            st.markdown('**📉 Top Losers**')
+            for _t, (_p, _c) in reversed(_losers):
+                _name = TICKER_NAMES.get(_t, _t)
+                st.markdown(
+                    f"""<div style="display:flex;justify-content:space-between;align-items:center;
+                        padding:0.4rem 0.8rem;margin-bottom:0.3rem;border-radius:8px;
+                        background:rgba(255,23,68,0.10);border:1px solid rgba(255,23,68,0.25);">
+                        <span style="font-weight:600;color:#000;">{_name} <span style="color:#000;font-size:0.8rem;">({_t})</span></span>
+                        <span style="font-weight:700;color:#ff1744;">${_p:.2f} &nbsp; {_c:+.2f}%</span>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+        # Signals count badge
+        try:
+            _sc = get_signal_stats()
+            _sig_total = _sc.get('total', 0)
+        except Exception:
+            _sig_total = 0
+        if _sig_total:
+            st.markdown(
+                f'<div style="margin-top:0.6rem;font-size:0.82rem;color:#444;">'
+                f'🔔 <b style="color:#667eea;">{_sig_total:,} signals</b> detected across '
+                f'<b style="color:#667eea;">{len(WATCHLIST_TICKERS)} tickers</b> and '
+                f'<b style="color:#667eea;">10 signal types</b> — '
+                f'see <i>Stock Deep Dive</i> for the full breakdown.</div>',
+                unsafe_allow_html=True,
+            )
+    st.markdown('---')
 
 # ── Top section: suggestions (left) + market insights (right) ────────
 if cfg['show_signals']:
     _top_left, _top_right = st.columns([2.5, 1.2])
+elif st.session_state.level == 'curious' and not st.session_state.messages:
+    # Just Curious: give equal space for market snapshot on the right
+    _top_left, _top_right = st.columns([1.4, 1])
 else:
     _top_left, _top_right = st.columns([1, 0.001])
 
 with _top_right:
     if cfg['show_signals']:
         st.markdown("#### 📰 Market Insights")
+        _tech_note(
+            'Market Insights — Snowflake Cortex LLM',
+            'Top 6 signals are fetched from the Snowflake view `V_SIGNAL_SUMMARY` (built by dbt), '
+            'formatted as context, and passed to `SNOWFLAKE.CORTEX.COMPLETE(\'llama3.1-70b\')` '
+            'to generate news-style bullet points. Result is cached for 15 minutes.',
+        )
         with st.spinner("Generating insights..."):
             try:
                 insights = get_market_insights()
@@ -1022,11 +1997,60 @@ with _top_right:
             )
         else:
             st.caption("Insights unavailable at the moment.")
+    elif st.session_state.level == 'curious' and not st.session_state.messages:
+        # Just Curious: market snapshot panel
+        st.markdown('#### 📊 Today\'s Market')
+        _snapshot_tickers = ['SPY', 'QQQ', 'AAPL']
+        _snap_names = {'SPY': 'S&P 500', 'QQQ': 'Nasdaq 100', 'AAPL': 'Apple'}
+        with st.spinner(''):
+            for _st_ticker in _snapshot_tickers:
+                try:
+                    _sp, _sc2, _ = get_latest_price(_st_ticker)
+                    if _sp is not None:
+                        _sup = _sc2 >= 0
+                        _sbg = 'rgba(0,200,83,0.12)' if _sup else 'rgba(255,23,68,0.12)'
+                        _sbc = 'rgba(0,200,83,0.3)' if _sup else 'rgba(255,23,68,0.3)'
+                        _scolor = '#00c853' if _sup else '#ff1744'
+                        _sarrow = '▲' if _sup else '▼'
+                        st.markdown(
+                            f"""<div style="background:{_sbg};border:1px solid {_sbc};
+                                border-radius:12px;padding:0.9rem 1.1rem;margin-bottom:0.5rem;
+                                display:flex;justify-content:space-between;align-items:center;">
+                                <div>
+                                    <div style="font-weight:700;font-size:1rem;color:#000;">{_snap_names[_st_ticker]}</div>
+                                    <div style="font-size:0.75rem;color:#333;">{_st_ticker}</div>
+                                </div>
+                                <div style="text-align:right;">
+                                    <div style="font-size:1.3rem;font-weight:700;color:#000;">${_sp:.2f}</div>
+                                    <div style="font-size:0.9rem;font-weight:600;color:{_scolor};">{_sarrow} {abs(_sc2):.2f}%</div>
+                                </div>
+                            </div>""",
+                            unsafe_allow_html=True,
+                        )
+                except Exception:
+                    pass
 
 with _top_left:
     if not st.session_state.messages:
         st.markdown('')
         st.markdown(f"##### {cfg['icon']} {cfg['tagline']}")
+        # Just Curious: Story of the Day above suggestions
+        if st.session_state.level == 'curious':
+            with st.spinner('Generating today\'s market story...'):
+                try:
+                    _story = get_story_of_day()
+                except Exception:
+                    _story = None
+            if _story:
+                st.markdown(
+                    f'<div style="background:linear-gradient(135deg,rgba(102,126,234,0.08),'
+                    f'rgba(118,75,162,0.08));border-radius:12px;border:1px solid '
+                    f'rgba(102,126,234,0.2);padding:0.9rem 1.1rem;margin-bottom:1rem;'
+                    f'font-size:0.9rem;line-height:1.65;color:#222;">'
+                    f'📖 <b style="color:#a8b4f8;">Today\'s Market Story</b><br>{html.escape(_story)}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
         st.markdown("Try one of these, or type your own question:")
         cols = st.columns(len(cfg['suggestions']))
         for i, (btn_label, full_q) in enumerate(cfg['suggestions']):
@@ -1035,6 +2059,16 @@ with _top_left:
                     st.session_state.pending_q = full_q
 
 # ── Chat history ─────────────────────────────────────────────────────
+_tech_note(
+    'Chat — RAG-style Context Augmentation + Snowflake Cortex',
+    'When you ask a question, `build_context()` runs targeted SQL queries against Snowflake views '
+    '(`V_STOCK_PRICES`, `V_SIGNAL_SUMMARY`, `V_FED_FUNDS_RATE`, `V_CPI_CHANGES`, '
+    '`V_GDP_CHANGES`, `V_YIELD_CURVE`, `V_FRED_HOUSING`, `V_SENTIMENT_CHANGES`, etc.) '
+    'based on keywords in your question. '
+    'The retrieved data is injected into the prompt alongside the last 3 conversation turns, '
+    'then sent to `SNOWFLAKE.CORTEX.COMPLETE(\'llama3.1-70b\')`. '
+    'SEC filing narratives (10-K/10-Q summaries from `V_SEC_NARRATIVES`) are also injected when a ticker is mentioned.',
+)
 for msg in st.session_state.messages:
     with st.chat_message(msg['role'], avatar='🧑‍🎓' if msg['role'] == 'user' else '🔍'):
         st.markdown(msg['content'])

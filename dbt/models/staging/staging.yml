@@ -50,6 +50,44 @@ models:
       - name: YIELD_PCT
         description: "10Y yield, percent."
 
+  - name: stg_10y_treasury_fred
+    description: |
+      10-Year Treasury constant maturity yield (DGS10) from FRED API. Free
+      alternative to stg_10y_treasury. Materializes as V_10Y_TREASURY_FRED.
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: YIELD_PCT
+        description: "10Y yield as decimal (e.g. 0.0425 = 4.25%)."
+
+  - name: stg_fred_gdp
+    description: "Real GDP (GDPC1) from FRED API. Quarterly SAAR in billions. Materializes as V_FRED_GDP."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: GDP_REAL_BILLIONS
+
+  - name: stg_fred_housing
+    description: "Housing Starts (HOUST) from FRED API. Monthly SAAR in thousands. Materializes as V_FRED_HOUSING."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: HOUSING_STARTS_K
+
+  - name: stg_fred_sentiment
+    description: "UMich Consumer Sentiment (UMCSENT) from FRED API. Monthly index. Materializes as V_FRED_SENTIMENT."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: SENTIMENT_INDEX
+
+  - name: stg_fred_inflation_expectations
+    description: "10Y Breakeven Inflation Rate (T10YIE) from FRED API. Daily. Materializes as V_FRED_INFLATION_EXPECTATIONS."
+    columns:
+      - name: DATE
+        tests: [not_null]
+      - name: INFLATION_EXPECTATION_PCT
+
   - name: stg_unemployment
     description: |
       National unemployment rate, monthly. Requires the paid marketplace share.

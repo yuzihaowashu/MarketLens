@@ -85,6 +85,7 @@ FRED_SERIES_GDP                    = 'GDPC1'    # Real GDP, quarterly
 FRED_SERIES_HOUSING_STARTS         = 'HOUST'    # Housing starts, monthly SAAR
 FRED_SERIES_CONSUMER_SENTIMENT     = 'UMCSENT'  # UMich consumer sentiment, monthly
 FRED_SERIES_INFLATION_EXPECTATIONS = 'T10YIE'   # 10Y breakeven inflation, daily
+FRED_SERIES_TREASURY_10Y           = 'DGS10'    # 10Y Treasury constant maturity yield, daily
 
 # ---------------------------------------------------------------------------
 # Signal thresholds
@@ -140,6 +141,7 @@ def parse_env_list(key: str, default: list) -> list:
 KAFKA_BOOTSTRAP     = _env_strip('KAFKA_BOOTSTRAP', 'localhost:9092') or 'localhost:9092'
 KAFKA_PRICES_TOPIC  = _env_strip('KAFKA_PRICES_TOPIC', 'raw.stock.prices') or 'raw.stock.prices'
 KAFKA_MACRO_TOPIC   = _env_strip('KAFKA_MACRO_TOPIC', 'raw.macro.indicators') or 'raw.macro.indicators'
+KAFKA_SIGNALS_TOPIC = _env_strip('KAFKA_SIGNALS_TOPIC', 'signals.anomalies') or 'signals.anomalies'
 
 # ---------------------------------------------------------------------------
 # Ingestion

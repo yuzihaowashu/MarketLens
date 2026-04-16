@@ -9,6 +9,7 @@ Series fetched:
   HOUST   → HOUSING_STARTS            (Housing starts, monthly SAAR)
   UMCSENT → CONSUMER_SENTIMENT        (UMich consumer sentiment, monthly)
   T10YIE  → INFLATION_EXPECTATIONS_10Y (10Y breakeven inflation, daily)
+  DGS10   → TREASURY_10Y              (10Y Treasury constant maturity yield, daily)
 
 Requires FRED_API_KEY in config (free: https://fred.stlouisfed.org/docs/api/api_key.html).
 """
@@ -132,6 +133,11 @@ class FredProducer:
                                   'INFLATION_EXPECTATIONS_10Y',
                                   start_date=self.start_date)
 
+    def _fetch_treasury_10y(self) -> List[MacroIndicator]:
+        return self._fetch_series(cfg.FRED_SERIES_TREASURY_10Y,
+                                  'TREASURY_10Y',
+                                  start_date=self.start_date)
+
     # ------------------------------------------------------------------
     # Aggregate (fail-open per series)
     # ------------------------------------------------------------------
@@ -143,6 +149,7 @@ class FredProducer:
             ('Housing Starts',         self._fetch_housing_starts),
             ('Consumer Sentiment',     self._fetch_consumer_sentiment),
             ('Inflation Expectations', self._fetch_inflation_expectations),
+            ('10Y Treasury Yield',     self._fetch_treasury_10y),
         ]
         for name, fn in fetchers:
             try:
@@ -178,6 +185,7 @@ class FredProducer:
             'HOUSING_STARTS':             cfg.FRED_SERIES_HOUSING_STARTS,
             'CONSUMER_SENTIMENT':         cfg.FRED_SERIES_CONSUMER_SENTIMENT,
             'INFLATION_EXPECTATIONS_10Y': cfg.FRED_SERIES_INFLATION_EXPECTATIONS,
+            'TREASURY_10Y':               cfg.FRED_SERIES_TREASURY_10Y,
         }
 
         total = len(indicators)

@@ -124,3 +124,50 @@ JOIN (
     GROUP BY DATE
 ) m ON m.DATE = r.DATE
 WHERE r.SECTOR_RANK = 1 OR r.SECTOR_RANK = m.MAX_RANK
+
+UNION ALL
+
+-- Yield curve inversion flips (INVERSION_START / INVERSION_END)
+SELECT
+    DATE,
+    'YIELD_CURVE'     AS SIGNAL_TYPE,
+    'TREASURY_SPREAD' AS ENTITY,
+    ROUND(CURVE_SPREAD * 100, 2)                                      AS MAGNITUDE,
+    CASE FLIP_EVENT WHEN 'INVERSION_START' THEN 4.0 ELSE 3.0 END      AS SALIENCE_SCORE,
+    CASE FLIP_EVENT
+        WHEN 'INVERSION_START' THEN 'Yield curve inverted: 10Y-FFR spread '
+            || ROUND(CURVE_SPREAD * 100, 2) || '% (recession warning)'
+        WHEN 'INVERSION_END'   THEN 'Yield curve un-inverted: spread back to '
+            || ROUND(CURVE_SPREAD * 100, 2) || '%'
+    END AS SUMMARY
+FROM {{ ref('yield_curve_signals') }}
+
+UNION ALL
+
+-- GDP contraction quarters
+SELECT
+    DATE,
+    'GDP_CONTRACTION' AS SIGNAL_TYPE,
+    'GDP_REAL'        AS ENTITY,
+    QOQ_GROWTH_PCT                         AS MAGNITUDE,
+    ROUND(ABS(QOQ_GROWTH_PCT), 2)          AS SALIENCE_SCORE,
+    'Real GDP contracted ' || QOQ_GROWTH_PCT || '% QoQ to $'
+        || ROUND(GDP_REAL_BILLIONS, 0) || 'B' AS SUMMARY
+FROM {{ ref('gdp_changes') }}
+WHERE IS_CONTRACTION = TRUE
+
+UNION ALL
+
+-- Consumer sentiment sharp moves (>5 points MoM)
+SELECT
+    DATE,
+    'SENTIMENT_SHIFT' AS SIGNAL_TYPE,
+    'UMICH_SENTIMENT' AS ENTITY,
+    MOM_CHANGE                                                         AS MAGNITUDE,
+    ROUND(ABS(MOM_CHANGE), 1)                                          AS SALIENCE_SCORE,
+    'Consumer sentiment ' || CASE SENTIMENT_EVENT
+        WHEN 'SHARP_DROP' THEN 'dropped sharply'
+        WHEN 'SHARP_RISE' THEN 'rose sharply'
+    END || ' by ' || MOM_CHANGE || ' pts to ' || SENTIMENT_INDEX AS SUMMARY
+FROM {{ ref('sentiment_changes') }}
+WHERE SENTIMENT_EVENT IS NOT NULL

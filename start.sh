@@ -15,7 +15,7 @@ cd "$SCRIPT_DIR"
 
 PORT="${MARKETLENS_PORT:-8501}"
 VENV_DIR=".venv"
-KEY_PATH="/Users/andrewhaggstrom/Desktop/CS Projects/Keys/rsa_key.p8"
+KEY_PATH="${SNOWFLAKE_PRIVATE_KEY:-${HOME}/airflow/snowflake_rsa_key.p8}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
