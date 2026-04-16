@@ -5,14 +5,14 @@ USE DATABASE SCORPION_DB;
 USE SCHEMA MARKETLENS;
 
 WITH latest AS (
-    SELECT MAX(date) AS d
+    SELECT MAX(DATE) AS d
     FROM V_ANOMALY_SCORES
 )
 SELECT
-    a.ticker,
-    a.date,
-    ROUND(a.daily_return * 100, 4) AS daily_return_pct,
-    ROUND(a.z_score, 4)          AS z_score
+    a.TICKER,
+    a.DATE,
+    ROUND(a.DAILY_RETURN * 100, 4) AS daily_return_pct,
+    ROUND(a.Z_SCORE, 4)            AS z_score
 FROM V_ANOMALY_SCORES AS a
-INNER JOIN latest AS l ON a.date = l.d
-ORDER BY a.ticker;
+INNER JOIN latest AS l ON a.DATE = l.d
+ORDER BY a.TICKER;
