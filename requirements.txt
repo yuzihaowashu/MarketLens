@@ -25,5 +25,8 @@ lxml>=4.9,<6
 dbt-core>=1.8,<2
 dbt-snowflake>=1.8,<2
 
+# Signal heatmap
+matplotlib>=3.7,<4
+
 # Kafka (Phase 2 streaming layer)
 kafka-python>=2.0,<3

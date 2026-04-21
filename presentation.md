@@ -31,7 +31,11 @@
 | **Ingestion & orchestration** (4 producers, Airflow DAG, pipeline logging) | **Andrew** | **~1 min** |
 | **dbt transformation layer** (13 models, staging → marts, quality tests)   | **Andrew** | **~1 min** |
 | **Signal engineering** (10 signal types, RSI/MA/drawdown SQL, SEC NLP)     | **Andrew** | **~1 min** |
-| Kafka streaming, LLM interface, frontend                                   | Zihao      | 3.5 min    |
+| **From Signal to Screen: Overview** (dual pipeline architecture)           | **Zihao**  | **30 sec** |
+| **Event-Driven Pipeline** (Kafka, GBM ticks, 4 consumers)                 | **Zihao**  | **~1 min** |
+| **Why not Flink/Spark?** (scale argument, design decision)                 | **Zihao**  | **~1 min** |
+| **Frontend Architecture** (Streamlit, 3 modes, caching, fragments)         | **Zihao**  | **~1 min** |
+| **AI Interface** (RAG, Cortex LLM, 3 system prompts)                       | **Zihao**  | **~1 min** |
 | **What each metric means** (RSI, Z-score, yield curve, sentiment, GDP)    | **Zhuang** | **~1 min** |
 | **User journey case study** (one event through 3 user lenses)             | **Zhuang** | **~1 min** |
 | Future directions                                                          | Zihao      | 1 min      |
@@ -48,6 +52,18 @@
 
 **Headline:** *"The S&P 500 dropped 3% yesterday. What does that actually mean for you?"*
 
+**Speaker note:**
+
+> "You've probably seen this scene in a movie — someone sitting in front of a wall of monitors, staring at curves shooting up and down, numbers flashing in red and green, technical indicators everywhere. It looks intense. It looks like they know something you don't.
+>
+> What you're actually looking at is called a Bloomberg Terminal — a professional platform used by Wall Street traders, hedge funds, and banks to access real-time market data, news, and analytics all in one place. Think of it as the 'god mode' dashboard for the finance world.
+>
+> But here's the catch: a Bloomberg Terminal costs $24,000 a year. Per seat. There are only about 300,000 of them in the world, and they are not designed for the rest of us.
+>
+> So what do you do if you want to understand what's happening in the market — without a finance degree, without paying $24,000, without spending months reading textbooks?
+>
+> That's exactly the gap MarketLens is built to close — making real market intelligence understandable to anyone, in plain language, right now."
+
 **Talking points:**
 
 - Market data is everywhere — Reuters, CNBC, Bloomberg — but written entirely for professionals
@@ -58,7 +74,7 @@
   - An enthusiast wants trends and comparisons
   - An analyst wants Z-scores, RSI, drawdown percentages, and macro overlays
 
-**Visual:** Split screen — left: overwhelming Bloomberg terminal screenshot; right: MarketLens landing page (clean, three modes)
+**Visual:** Split screen — left: overwhelming Bloomberg Terminal screenshot (or movie-style trader desk with multiple monitors); right: MarketLens landing page (clean, three modes)
 
 ---
 
@@ -366,16 +382,49 @@ Filing HTML (EDGAR)
 
 ---
 
-### SLIDE 8 — Kafka Real-Time Streaming *(Zihao, ~1 min)*
+---
 
-**Headline:** *Multi-consumer fan-out: one stream, four independent consumers.*
+## SECTION: From Signal to Screen *(Zihao, ~4 min)*
 
-**Talking points:**
+*This section covers everything between the data warehouse and the user — two parallel pipelines converging into one frontend.*
 
-- The core Snowflake pipeline is batch (daily). Kafka solves the real-time gap.
-- A **tick producer** simulates realistic price ticks using **Geometric Brownian Motion** every 2 seconds for all 9 tickers
-- The ticks are published to a single Kafka topic. Four completely independent consumer groups each read the full stream — adding a new consumer never affects the others.
-- This is the textbook Kafka fan-out pattern, and it's fully live in the demo
+---
+
+### SLIDE 8 — From Signal to Screen: Overview *(Zihao, 30 sec)*
+
+**Headline:** *Two pipelines. One screen.*
+
+**Speaker note:**
+
+> "Andrew just walked us through how raw data becomes signals inside Snowflake. Now let's talk about how those signals get from the warehouse to you. There are actually two separate pipelines doing this simultaneously. The first is the batch pipeline Andrew described — Airflow runs it daily and the results live in Snowflake as V_* views. The second is a real-time streaming pipeline built on Kafka that runs continuously alongside it. Both pipelines feed into the same Streamlit frontend, and Snowflake Cortex AI sits on top to make everything understandable in plain language. Let me walk through each piece."
+
+**Figure — Dual Pipeline Architecture:**
+
+```
+  ./start.sh ──────────────────────────────────────────► Streamlit Frontend
+                                                                ▲
+  ./start_streaming.sh ──► Kafka (real-time, every 2s) ─────────┤
+                                                                │
+  Airflow Scheduler ──────► DAG (batch, daily 6PM ET)  ─────────┘
+                                     │
+                        ┌────────────┼────────────┐
+                        ▼            ▼            ▼
+                   Producers    Snowflake     dbt models
+                   (4 sources)  RAW tables   (13 models)
+                                                   │
+                                            V_SIGNAL_SUMMARY
+                                            V_* views
+```
+
+---
+
+### SLIDE 9 — Event-Driven Data Pipeline *(Zihao, ~1 min)*
+
+**Headline:** *Real-time stock price streaming through Kafka.*
+
+**Speaker note:**
+
+> "We enable real-time stock price streaming through Kafka. Since live market data feeds require paid subscriptions, we simulate realistic price ticks using Geometric Brownian Motion — a standard quantitative finance model for price movement — so we can demonstrate the full pipeline architecture with believable data. The Kafka setup itself is completely real: a producer publishes every two seconds, four independent consumer groups each read the full stream, and each does something different — writing to Snowflake, detecting anomalies, sending alerts, and feeding the live dashboard. Swap the simulation for a real data feed and nothing in the architecture changes."
 
 **GBM price simulation formula:**
 
@@ -399,31 +448,88 @@ tick_producer.py    │   Kafka Topic               │
 9 tickers × 2s      │   (broker: localhost:9092)  │
                     └──────────────┬──────────────┘
                                    │  (all groups read the full stream)
-              ┌────────────────────┼─────────────────────┐
-              │                    │                     │                    │
-        ┌─────▼──────┐    ┌───────▼──────┐   ┌─────────▼────┐   ┌──────────▼───┐
+              ┌────────────────────┼───────────────────┬───────────────────┐
+              │                    │                   │                   │
+        ┌─────▼──────┐    ┌───────▼──────┐   ┌────────▼─────┐   ┌─────────▼────┐
         │ sf-writer  │    │anomaly-check │   │   notifier   │   │  dashboard   │
         │ group      │    │ group        │   │   group      │   │  group       │
-        └─────┬──────┘    └───────┬──────┘   └─────────┬────┘   └──────────┬───┘
-              │                   │                     │                   │
-        Snowflake          signals.anomalies       Slack / email      live_feed.json
-        RAW_STOCK_PRICES   (another topic)         notification       → Streamlit
-                                  │                                   Live Feed page
+        └─────┬──────┘    └───────┬──────┘   └────────┬─────┘   └─────────┬────┘
+              │                   │                   │                   │
+        Snowflake          signals.anomalies      Slack / email      live_feed.json
+        RAW_STOCK_PRICES   (second topic)         notification       → Streamlit
+                                  │                                  Live Feed page
                            Z-score detector
 ```
 
+**Technical detail:**
+- Kafka broker runs in Docker (`confluentinc/cp-kafka:7.6.0`) on `localhost:9092`
+- Topic retention: 24 hours, 512 MB cap
+- Atomic JSON writes: consumer writes to `.tmp` then `os.replace()` — prevents half-written reads
+- Streamlit polls `live_feed.json` via `@st.fragment(run_every=2)`
+
 ---
 
-### SLIDE 9 — LLM Interface & RAG *(Zihao, ~1.5 min)*
+### SLIDE 10 — Why Not Flink or Spark Streaming? *(Zihao, ~1 min)*
 
-**Headline:** *Not a generic chatbot — every answer is grounded in live Snowflake data.*
+**Headline:** *Right tool for the right scale.*
 
-**Talking points:**
+**Speaker note:**
 
-- Most LLM chat interfaces send your question directly to the model → hallucinations, stale knowledge
-- MarketLens uses a **RAG-style pattern**: the question triggers targeted SQL queries first, then the real data is injected into the prompt
-- The model (Snowflake Cortex `llama3.1-70b`) only answers from the provided context — it cannot invent numbers
-- Three completely different system prompts for the three user levels mean the same signal produces a fundamentally different explanation
+> "A natural question is — why not use Apache Flink or Spark Streaming on top of Kafka? Both are industry-standard stream processing frameworks designed for exactly this kind of pipeline. The honest answer is scale. Flink and Spark Streaming are built for workloads processing thousands to millions of events per second — think fraud detection at a bank or clickstream processing at a social media platform. Our pipeline produces 9 tickers at one message every two seconds — roughly 4 to 5 messages per second. Deploying a Flink cluster for 5 messages per second would be massive over-engineering. The processing logic also doesn't justify it — each consumer does something simple: write a row, compute a Z-score, fire an HTTP request. Plain Python handles all of this cleanly. There is also the data reality: we are generating simulated ticks at a fixed rate, so there is no advantage to a distributed processor. In a production system with a real paid feed and hundreds of tickers updating every millisecond, Flink would be the right call. For our scope, Python consumers are the right tool."
+
+**Scale comparison:**
+
+| | MarketLens | When Flink / Spark is justified |
+|--|------------|---------------------------------|
+| Events/sec | ~4–5 | Thousands to millions |
+| Processing logic | Z-score, JSON write, HTTP call | Complex joins, windowing, aggregations |
+| Infrastructure | Single Docker broker | Multi-node cluster |
+| Data source | Simulated (GBM, fixed rate) | Real paid feed, high frequency |
+
+---
+
+### SLIDE 11 — Frontend Architecture *(Zihao, ~1 min)*
+
+**Headline:** *Three modes. Five pages. Built entirely in Streamlit.*
+
+**Speaker note:**
+
+> "We built a Streamlit frontend with five pages and three user modes — Just Curious, Know the Basics, and Financial Analyst. Each mode unlocks progressively more pages and data density, from a simple chat window all the way to signal heatmaps, RSI header cards, and drawdown metrics. The underlying data behind all three modes is identical — the platform decides what to surface and how to explain it based on who is asking."
+
+**Key Streamlit features used:**
+
+| Feature | What it does in MarketLens |
+|---------|---------------------------|
+| `st.session_state` | Tracks user level, current page, chat history across interactions |
+| `@st.cache_data(ttl=N)` | Caches Snowflake query results — prices (600s), signals (300s), stats (3600s) |
+| `@st.cache_resource` | Caches the Snowflake connection for the lifetime of the process |
+| `@st.fragment(run_every=2)` | Re-renders the Live Feed every 2 seconds without a full page reload |
+| `st.write_stream()` | Streams LLM response word-by-word as it arrives |
+| `st.query_params` | URL-based mode selection — links directly to a user level |
+
+**Visual — Page Access Matrix:**
+
+| Page                         | Just Curious | Know the Basics | Financial Analyst |
+| ---------------------------- | ------------ | --------------- | ----------------- |
+| Chat (AI assistant)          | ✅            | ✅               | ✅                 |
+| What's Moving leaderboard    | ❌            | ✅               | ✅                 |
+| Market Insights (AI bullets) | ❌            | ✅               | ✅                 |
+| Stock Deep Dive              | ❌            | ✅               | ✅                 |
+| Macro Overlay (7 tabs)       | ❌            | ✅               | ✅                 |
+| Pipeline Health              | ❌            | ✅               | ✅                 |
+| Live Kafka Feed              | ❌            | ✅               | ✅                 |
+| Signal Heatmap               | ❌            | ❌               | ✅                 |
+| Admin Mode tech notes        | ❌            | ❌               | ✅                 |
+
+---
+
+### SLIDE 12 — AI Interface *(Zihao, ~1 min)*
+
+**Headline:** *Not a chatbot. A grounded analyst.*
+
+**Speaker note:**
+
+> "We power the AI assistant through Snowflake Cortex running llama3.1-70b. Rather than sending questions directly to the model, we first fire targeted SQL queries against live Snowflake data — prices, signals, SEC filing narratives — and inject the results into the prompt before the model generates anything. This keeps every answer grounded in real numbers with no hallucinations. We also write three completely different system prompts, one per user level, so the same signal produces a plain-English analogy for a curious user and a quantitative breakdown with Z-scores and filing dates for an analyst."
 
 **Figure — RAG Pipeline:**
 
@@ -446,10 +552,9 @@ User question: "What's happening with Apple?"
                     ▼
   ┌─────────────────────────────────────────────┐
   │  Prompt assembly                            │
-  │                                             │
-  │  [system_prompt for user's level]           │
+  │  [system_prompt for user level]             │
   │  + [last 3 conversation turns]              │
-  │  + [retrieved market data as context]       │
+  │  + [retrieved market context]               │
   │  + [user question]                          │
   └─────────────────┬───────────────────────────┘
                     │
@@ -459,53 +564,25 @@ User question: "What's happening with Apple?"
                     │
                     ▼
          Grounded, level-appropriate answer
-         streamed word-by-word to the user
+         streamed word-by-word via st.write_stream()
 ```
 
-**Pseudo-code — user level controls response style:**
+**Pseudo-code — three system prompts:**
 
 ```python
 SYSTEM_PROMPTS = {
-  "curious":      "Explain like I'm five. Use everyday analogies. Max 3-4 sentences. No jargon.",
+  "curious":      "Explain like I'm five. Use everyday analogies. No jargon. Max 3-4 sentences.",
   "intermediate": "Standard financial terms OK. Give concise numbers. 3-5 sentences.",
   "analyst":      "Use technical language freely (z-scores, bps, vol). Be quantitative. Cite dates."
 }
 
 def ask_llm(question, user_level):
-    context   = build_context(question)   # SQL queries fired here
-    prompt    = SYSTEM_PROMPTS[user_level]
-    prompt   += f"\n\nContext:\n{context}"
-    prompt   += f"\n\nQuestion: {question}"
+    context = build_context(question)   # fires SQL queries against Snowflake
+    prompt  = SYSTEM_PROMPTS[user_level]
+    prompt += f"\n\nContext:\n{context}"
+    prompt += f"\n\nQuestion: {question}"
     return snowflake.cortex.complete("llama3.1-70b", prompt)
 ```
-
----
-
-### SLIDE 10 — Frontend Design *(Zihao, ~1 min)*
-
-**Headline:** *Three modes. Five pages. One consistent experience.*
-
-**Talking points:**
-
-- The frontend is a Streamlit app with session-state routing — no page reloads
-- Each mode unlocks progressively more pages and data
-- Admin Mode: flip a toggle → tech-stack explainer banners appear on every page (designed for this presentation)
-
-**Visual — Page Access Matrix:**
-
-
-| Page                         | Just Curious | Know the Basics | Financial Analyst |
-| ---------------------------- | ------------ | --------------- | ----------------- |
-| Chat (AI assistant)          | ✅            | ✅               | ✅                 |
-| What's Moving leaderboard    | ❌            | ✅               | ✅                 |
-| Market Insights (AI bullets) | ❌            | ✅               | ✅                 |
-| Stock Deep Dive              | ❌            | ✅               | ✅                 |
-| Macro Overlay (7 tabs)       | ❌            | ✅               | ✅                 |
-| Pipeline Health              | ❌            | ✅               | ✅                 |
-| Live Kafka Feed              | ❌            | ✅               | ✅                 |
-| Signal Heatmap               | ❌            | ❌               | ✅                 |
-| Admin Mode tech notes        | ❌            | ❌               | ✅                 |
-
 
 ---
 

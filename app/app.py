@@ -1565,9 +1565,21 @@ if st.session_state.page == 'stock_deep_dive':
     dd_period = st.radio('Period', ['30D', '90D', '180D'], horizontal=True, key='dd_period')
     dd_days   = {'30D': 30, '90D': 90, '180D': 180}[dd_period]
 
+    # ── Pre-fetch all data in one spinner to avoid staircase layout shifts ─
+    with st.spinner('Loading data...'):
+        _tsig  = get_ticker_signal_summary(dd_ticker)
+        try:
+            dd_df = get_anomaly_data(dd_ticker, dd_days)
+        except Exception as _e:
+            dd_df = pd.DataFrame()
+            st.warning(f'Could not load anomaly data: {_e}')
+        try:
+            _hm_df = get_signal_heatmap_data()
+        except Exception:
+            _hm_df = pd.DataFrame()
+        _anom_cnt = int((dd_df['IS_ANOMALY'] == True).sum()) if not dd_df.empty else 0
+
     # ── Ticker summary header cards ────────────────────────────────────
-    with st.spinner('Loading indicator summary...'):
-        _tsig = get_ticker_signal_summary(dd_ticker)
     _hc = st.columns(4)
     # RSI card
     with _hc[0]:
@@ -1620,12 +1632,6 @@ if st.session_state.page == 'stock_deep_dive':
         )
     # Anomaly count card
     with _hc[3]:
-        with st.spinner(''):
-            try:
-                _adf = get_anomaly_data(dd_ticker, dd_days)
-                _anom_cnt = int((_adf['IS_ANOMALY'] == True).sum()) if not _adf.empty else 0
-            except Exception:
-                _anom_cnt = 0
         _anom_col = '#ff4444' if _anom_cnt > 3 else '#ffaa44' if _anom_cnt > 0 else '#aaaaaa'
         st.markdown(
             f"""<div style="background:rgba(20,20,40,0.7);border-radius:10px;
@@ -1639,13 +1645,6 @@ if st.session_state.page == 'stock_deep_dive':
             unsafe_allow_html=True,
         )
     st.markdown('<div style="margin-bottom:0.8rem;"></div>', unsafe_allow_html=True)
-
-    with st.spinner('Loading anomaly data...'):
-        try:
-            dd_df = get_anomaly_data(dd_ticker, dd_days)
-        except Exception as _e:
-            dd_df = pd.DataFrame()
-            st.warning(f'Could not load anomaly data: {_e}')
 
     if not dd_df.empty:
         dd_df['DATE'] = pd.to_datetime(dd_df['DATE'])
@@ -1670,7 +1669,7 @@ if st.session_state.page == 'stock_deep_dive':
                 anomalies[['DATE', 'DAILY_RETURN_PCT', 'Z_SCORE']].rename(columns={
                     'DATE': 'Date', 'DAILY_RETURN_PCT': 'Return', 'Z_SCORE': 'Z-Score',
                 }),
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
             )
         else:
@@ -1682,11 +1681,6 @@ if st.session_state.page == 'stock_deep_dive':
     st.markdown('---')
     st.markdown('#### 🔥 Signal Heatmap — All Tickers')
     st.caption('Counts of each signal type fired per ticker across all recorded history.')
-    with st.spinner('Loading heatmap...'):
-        try:
-            _hm_df = get_signal_heatmap_data()
-        except Exception:
-            _hm_df = pd.DataFrame()
     if not _hm_df.empty:
         _pivot = (
             _hm_df.pivot_table(index='ENTITY', columns='SIGNAL_TYPE', values='CNT', aggfunc='sum', fill_value=0)
@@ -1699,7 +1693,7 @@ if st.session_state.page == 'stock_deep_dive':
                 .background_gradient(cmap='YlOrRd', axis=0)
                 .format('{:.0f}')
             )
-            st.dataframe(_styled, use_container_width=True)
+            st.dataframe(_styled, width='stretch')
         else:
             st.info('Not enough data to build heatmap yet.')
     else:
